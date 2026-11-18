@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reparto de pacientes – Hemodiálisis</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--tx:#1d2733;--mut:#6b7785;--pri:#0f6d8c;--pri2:#e3f1f6;--dan:#b3261e;--ok:#1b7f4b;--bd:#d9e0e6;--warn:#fff4d6}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--tx);font-size:15px}
+header{background:var(--pri);color:#fff;padding:12px 16px}
+header h1{margin:0;font-size:18px}
+nav{display:flex;gap:4px;background:#fff;border-bottom:1px solid var(--bd);overflow-x:auto;position:sticky;top:0;z-index:5}
+nav button{flex:1;min-width:90px;border:0;background:none;padding:12px 8px;font-size:14px;color:var(--mut);border-bottom:3px solid transparent;cursor:pointer}
+nav button.on{color:var(--pri);border-color:var(--pri);font-weight:600}
+main{max-width:960px;margin:0 auto;padding:12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
+.card h2{margin:0 0 10px;font-size:16px}
+label{font-size:13px;color:var(--mut);display:block;margin-bottom:3px}
+input[type=text],input[type=date],select,textarea{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:7px;font-size:15px;background:#fff}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>div{flex:1;min-width:130px}
+.btn{border:1px solid var(--pri);background:var(--pri);color:#fff;padding:9px 14px;border-radius:7px;font-size:14px;cursor:pointer}
+.btn.sec{background:#fff;color:var(--pri)}
+.btn.dan{background:#fff;color:var(--dan);border-color:var(--dan)}
+.btn.sm{padding:4px 9px;font-size:13px}
+.btn.big{font-size:16px;padding:12px 18px;width:100%}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.chk{display:flex;flex-wrap:wrap;gap:6px}
+.chk label{display:flex;align-items:center;gap:6px;border:1px solid var(--bd);border-radius:20px;padding:5px 11px;color:var(--tx);font-size:14px;margin:0;cursor:pointer;background:#fff}
+.chk label.on{background:var(--pri2);border-color:var(--pri)}
+.chk input{margin:0}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--bd);font-size:14px}
+th{font-size:12px;color:var(--mut);text-transform:uppercase}
+.tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:10px;background:#eef1f4;color:var(--mut);margin-left:4px}
+.tag.alta{background:#fde8e6;color:var(--dan)}
+.muted{color:var(--mut);font-size:13px}
+.msg{padding:10px;border-radius:7px;margin-top:10px;font-size:14px}
+.msg.err{background:#fde8e6;color:var(--dan)}
+.msg.warn{background:var(--warn);color:#7a5a00}
+.msg.ok{background:#e4f5ec;color:var(--ok)}
+.res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.nurse{border:1px solid var(--bd);border-radius:9px;overflow:hidden;background:#fff}
+.nurse h3{margin:0;padding:8px 10px;background:var(--pri2);font-size:15px;display:flex;justify-content:space-between;gap:6px}
+.nurse h3 span{font-weight:400;font-size:13px;color:var(--mut)}
+.nurse table td{font-size:14px}
+.hide{display:none!important}
+.print-head{display:none}
+@media print{
+  header,nav,.noprint{display:none!important}
+  body{background:#fff;font-size:12pt}
+  main{max-width:none;padding:0}
+  .card{border:0;padding:0}
+  .print-head{display:block;margin-bottom:10px}
+  .print-head h1{font-size:16pt;margin:0}
+  .res-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .nurse{break-inside:avoid;border:1px solid #888}
+  .nurse h3{background:#eee!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<header><h1>🩺 Reparto de pacientes · Hemodiálisis</h1></header>
+<nav class="noprint">
+  <button data-t="sorteo" class="on">Sorteo</button>
+  <button data-t="pacientes">Pacientes</button>
+  <button data-t="personal">Personal y áreas</button>
+  <button data-t="historial">Historial</button>
+</nav>
+<main>
+
+<!-- ============ SORTEO ============ -->
+<section id="t-sorteo">
+  <div class="card noprint">
+    <h2>1. Sesión</h2>
+    <div class="row">
+      <div><label>Fecha</label><input type="date" id="sFecha"></div>
+      <div><label>Día</label><select id="sGrupo"></select></div>
+      <div><label>Turno</label><select id="sTurno"></select></div>
+    </div>
+  </div>
+  <div class="card noprint">
+    <h2>2. Pacientes que vinieron <span class="muted" id="sPacCount"></span></h2>
+    <div class="btns" style="margin:0 0 8px"><button class="btn sm sec" onclick="marcarTodos('sPac',true)">Todos</button><button class="btn sm sec" onclick="marcarTodos('sPac',false)">Ninguno</button></div>
+    <div class="chk" id="sPac"></div>
+  </div>
+  <div class="card noprint">
+    <h2>3. Enfermeros presentes <span class="muted" id="sEnfCount"></span></h2>
+    <div class="chk" id="sEnf"></div>
+    <h2 style="margin-top:14px">4. Áreas que se usan hoy <span class="muted" id="sAreaCount"></span></h2>
+    <div class="chk" id="sArea"></div>
+    <p class="muted">Se asigna un enfermero por área al azar. Si hay más áreas que enfermeros, a algunos les tocan dos áreas.</p>
+    <label class="noprint" style="display:flex;gap:6px;align-items:center;color:var(--tx);margin-top:8px"><input type="checkbox" id="sNoRep" checked> Evitar repetir enfermero–paciente del último reparto de este turno</label>
+    <button class="btn big" style="margin-top:12px" onclick="sortear()">🎲 Sortear</button>
+    <div id="sMsg"></div>
+  </div>
+  <div class="card hide" id="resCard">
+    <div class="print-head"><h1 id="pTitle"></h1><div id="pSub"></div></div>
+    <div class="noprint" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <h2 style="margin:0">Resultado</h2>
+      <div class="btns" style="margin:0">
+        <button class="btn sec" onclick="sortear()">🎲 Volver a sortear</button>
+        <button class="btn" onclick="guardarHist()">💾 Guardar</button>
+        <button class="btn" onclick="window.print()">🖨️ Imprimir</button>
+      </div>
+    </div>
+    <div id="resInfo" class="muted noprint" style="margin-bottom:8px"></div>
+    <div class="res-grid" id="resGrid"></div>
+  </div>
+</section>
+
+<!-- ============ PACIENTES ============ -->
+<section id="t-pacientes" class="hide">
+  <div class="card">
+    <h2 id="pFormTitle">Dar de alta paciente</h2>
+    <input type="hidden" id="pId">
+    <div class="row">
+      <div style="flex:2"><label>Nombre</label><input type="text" id="pNombre" placeholder="Nombre del paciente"></div>
+      <div><label>Turno</label><select id="pTurno"></select></div>
+    </div>
+    <div style="margin-top:8px">
+      <label>Días que le tocan</label>
+      <div class="chk" id="pDias"></div>
+      <div class="btns" style="margin-top:6px">
+        <button class="btn sm sec" type="button" onclick="setDias([1,3,5])">L · M · V</button>
+        <button class="btn sm sec" type="button" onclick="setDias([2,4,6])">M · J · S</button>
+        <button class="btn sm sec" type="button" onclick="setDias([])">Limpiar</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div><label>Carga de trabajo</label><select id="pCarga"><option value="1">Normal</option><option value="2">Alta (catéter, inestable, dependiente…)</option></select></div>
+      <div style="flex:2"><label>Nota (opcional)</label><input type="text" id="pNota" placeholder="Ej. acceso, alergias, etc."></div>
+    </div>
+    <div class="btns">
+      <button class="btn" onclick="guardarPac()">Guardar</button>
+      <button class="btn sec hide" id="pCancel" onclick="limpiarPac()">Cancelar</button>
+    </div>
+    <div id="pMsg"></div>
+  </div>
+  <div class="card">
+    <div class="row" style="align-items:flex-end">
+      <div style="flex:2"><label>Buscar</label><input type="text" id="fTxt" placeholder="Nombre…" oninput="renderPacs()"></div>
+      <div><label>Día</label><select id="fGrupo" onchange="renderPacs()"></select></div>
+      <div><label>Turno</label><select id="fTurno" onchange="renderPacs()"></select></div>
+    </div>
+    <p class="muted" id="pResumen"></p>
+    <table><thead><tr><th>Paciente</th><th>Días</th><th>Turno</th><th></th></tr></thead><tbody id="pTabla"></tbody></table>
+  </div>
+</section>
+
+<!-- ============ PERSONAL ============ -->
+<section id="t-personal" class="hide">
+  <div class="card">
+    <h2>Enfermeros</h2>
+    <div class="row" style="align-items:flex-end">
+      <div style="flex:3"><label>Nombre</label><input type="text" id="eNombre" placeholder="Nombre del enfermero(a)" onkeydown="if(event.key==='Enter')addEnf()"></div>
+      <div style="flex:0"><button class="btn" onclick="addEnf()">Agregar</button></div>
+    </div>
+    <table style="margin-top:10px"><tbody id="eTabla"></tbody></table>
+  </div>
+  <div class="card">
+    <h2>Áreas de la sala</h2>
+    <p class="muted">Cada área tiene sus máquinas. Escribe rangos o listas: <b>1-4</b> o <b>1,2,5,6</b>.</p>
+    <div class="row" style="align-items:flex-end">
+      <div><label>Nombre del área</label><input type="text" id="aNombre" placeholder="Ej. Área A"></div>
+      <div><label>Máquinas</label><input type="text" id="aMaq" placeholder="1-4" onkeydown="if(event.key==='Enter')addArea()"></div>
+      <div style="flex:0"><button class="btn" onclick="addArea()">Agregar</button></div>
+    </div>
+    <div id="aMsg"></div>
+    <table style="margin-top:10px"><thead><tr><th>Área</th><th>Máquinas</th><th></th></tr></thead><tbody id="aTabla"></tbody></table>
+  </div>
+  <div class="card">
+    <h2>Turnos</h2>
+    <label>Turnos de la sala (separados por coma)</label>
+    <div class="row" style="align-items:flex-end">
+      <div style="flex:3"><input type="text" id="cTurnos"></div>
+      <div style="flex:0"><button class="btn" onclick="guardarTurnos()">Guardar</button></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Respaldo</h2>
+    <p class="muted">Los datos se guardan solo en este navegador. Descarga un respaldo de vez en cuando o para pasarlo a otro equipo.</p>
+    <div class="btns">
+      <button class="btn sec" onclick="exportar()">⬇️ Descargar respaldo</button>
+      <label class="btn sec" style="margin:0;color:var(--pri)">⬆️ Cargar respaldo<input type="file" accept=".json" class="hide" onchange="importar(this)"></label>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HISTORIAL ============ -->
+<section id="t-historial" class="hide">
+  <div class="card"><h2>Repartos guardados</h2><table><tbody id="hTabla"></tbody></table></div>
+</section>
+
+</main>
+<script>
+const DIAS={1:'Lunes',2:'Martes',3:'Miércoles',4:'Jueves',5:'Viernes',6:'Sábado'};
+const DCORTO={1:'Lun',2:'Mar',3:'Mié',4:'Jue',5:'Vie',6:'Sáb'};
+const diasTxt=d=>(d||[]).slice().sort().map(x=>DCORTO[x]).join(' · ')||'—';
+const KEY='reparto_hd_v1';
+let S=migrar(load());
+function migrar(d){ // versión anterior usaba grupos LMV / MJS
+  const M={LMV:[1,3,5],MJS:[2,4,6]};
+  d.patients.forEach(p=>{if(!p.dias){p.dias=M[p.grupo]||[];}delete p.grupo;});
+  d.history.forEach(h=>{if(h.dia==null&&h.fecha)h.dia=new Date(h.fecha+'T12:00').getDay();});
+  return d;
+}
+let actual=null; // resultado vigente
+
+function load(){
+  try{const d=JSON.parse(localStorage.getItem(KEY));if(d&&d.patients)return Object.assign({turnos:['3','4'],areas:[],nurses:[],patients:[],history:[]},d);}catch(e){}
+  return {turnos:['3','4'],areas:[],nurses:[],patients:[],history:[]};
+}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){alert('No se pudo guardar en este navegador.');}}
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+function msg(el,t,cls){$(el).innerHTML=t?`<div class="msg ${cls}">${t}</div>`:'';}
+function parseMaq(t){
+  const out=[];
+  for(const part of String(t).split(/[,\s]+/).filter(Boolean)){
+    const m=part.match(/^(\d+)\s*-\s*(\d+)$/);
+    if(m){let a=+m[1],b=+m[2];if(a>b)[a,b]=[b,a];for(let i=a;i<=b;i++)out.push(i);}
+    else if(/^\d+$/.test(part))out.push(+part);
+    else return null;
+  }
+  return [...new Set(out)].sort((a,b)=>a-b);
+}
+const hoy=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+function grupoDeFecha(f){const w=new Date(f+'T12:00').getDay();return w>=1&&w<=6?String(w):null;}
+function fmtFecha(f){if(!f)return'';const d=new Date(f+'T12:00');return d.toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long',year:'numeric'});}
+
+/* ---------- Tabs ---------- */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('main>section').forEach(s=>s.classList.toggle('hide',s.id!=='t-'+b.dataset.t));
+  renderAll();
+});
+
+/* ---------- Selects ---------- */
+function fillSelects(){
+  const g=Object.entries(DIAS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  const t=S.turnos.map(x=>`<option value="${esc(x)}">Turno ${esc(x)}</option>`).join('');
+  {const v=$('sGrupo').value;$('sGrupo').innerHTML=g;if(v)$('sGrupo').value=v;}
+  if(!$('pDias').children.length)$('pDias').innerHTML=Object.entries(DIAS).map(([k,v])=>`<label><input type="checkbox" value="${k}" onchange="this.parentNode.classList.toggle('on',this.checked)">${v}</label>`).join('');
+  for(const id of ['sTurno','pTurno']){const v=$(id).value;$(id).innerHTML=t;if(v&&S.turnos.includes(v))$(id).value=v;}
+  {const v=$('fGrupo').value;$('fGrupo').innerHTML='<option value="">Todos</option>'+g;$('fGrupo').value=v;}
+  {const v=$('fTurno').value;$('fTurno').innerHTML='<option value="">Todos</option>'+t;$('fTurno').value=S.turnos.includes(v)?v:'';}
+}
+
+/* ---------- Sorteo: listas ---------- */
+function chips(cont,items,checkedFn,countEl,suffix){
+  $(cont).innerHTML=items.length?items.map(it=>{
+    const c=checkedFn(it);
+    return `<label class="${c?'on':''}"><input type="checkbox" value="${it.id}" ${c?'checked':''} onchange="this.parentNode.classList.toggle('on',this.checked);contar()">${esc(it.name)}${it.carga==2?'<span class="tag alta">alta</span>':''}</label>`;
+  }).join(''):`<span class="muted">${suffix}</span>`;
+}
+function selIds(cont){return [...$(cont).querySelectorAll('input:checked')].map(i=>i.value);}
+function marcarTodos(cont,v){$(cont).querySelectorAll('input').forEach(i=>{i.checked=v;i.parentNode.classList.toggle('on',v);});contar();}
+function contar(){
+  $('sPacCount').textContent=`(${selIds('sPac').length})`;
+  $('sEnfCount').textContent=`(${selIds('sEnf').length})`;
+  const areas=S.areas.filter(a=>selIds('sArea').includes(a.id));
+  $('sAreaCount').textContent=`(${areas.length} · ${areas.reduce((s,a)=>s+a.maq.length,0)} máquinas)`;
+}
+function renderSorteo(){
+  const g=$('sGrupo').value,t=$('sTurno').value;
+  const pacs=S.patients.filter(p=>p.dias.includes(+g)&&p.turno===t).sort((a,b)=>a.name.localeCompare(b.name));
+  const prevP=new Set(selIds('sPac')),prevE=new Set(selIds('sEnf')),prevA=new Set(selIds('sArea'));
+  const first=!renderSorteo.done;
+  chips('sPac',pacs,p=>first||!renderSorteo.key||renderSorteo.key!==g+t?true:prevP.has(p.id),'sPacCount','No hay pacientes dados de alta para este día y turno.');
+  chips('sEnf',S.nurses,n=>first?true:prevE.has(n.id),'sEnfCount','Agrega enfermeros en “Personal y áreas”.');
+  chips('sArea',S.areas.map(a=>({id:a.id,name:`${a.name} (${a.maq.length})`})),a=>first?true:prevA.has(a.id),'sAreaCount','Agrega áreas en “Personal y áreas”.');
+  renderSorteo.done=true;renderSorteo.key=g+t;
+  contar();
+}
+$('sFecha').onchange=()=>{const g=grupoDeFecha($('sFecha').value);if(g)$('sGrupo').value=g;renderSorteo();};
+$('sGrupo').onchange=renderSorteo;$('sTurno').onchange=renderSorteo;
+
+/* ---------- Algoritmo ---------- */
+function unIntento(pacs,enfs,areas){
+  // 1) Enfermeros a áreas al azar (si sobran áreas, se reparten de forma rotativa)
+  const en=shuffle(enfs),ar=shuffle(areas);
+  const grupos=en.map(n=>({nurse:n,areas:[],maq:[],pac:[],carga:0}));
+  ar.forEach((a,i)=>{grupos[i%grupos.length].areas.push(a);grupos[i%grupos.length].maq.push(...a.maq);});
+  // 2) Pacientes: primero los de carga alta, cada uno al grupo con menos pacientes, luego menos carga, con capacidad
+  const orden=shuffle(pacs).sort((a,b)=>(b.carga||1)-(a.carga||1));
+  for(const p of orden){
+    const libres=grupos.filter(g=>g.pac.length<g.maq.length);
+    if(!libres.length)return null;
+    const minN=Math.min(...libres.map(g=>g.pac.length));
+    let c=libres.filter(g=>g.pac.length===minN);
+    const minC=Math.min(...c.map(g=>g.carga));
+    c=c.filter(g=>g.carga===minC);
+    const g=c[Math.floor(Math.random()*c.length)];
+    g.pac.push(p);g.carga+=(p.carga||1);
+  }
+  // 3) Máquinas al azar dentro del área del enfermero
+  for(const g of grupos){
+    const m=shuffle(g.maq);
+    g.asig=g.pac.map((p,i)=>({pid:p.id,name:p.name,carga:p.carga||1,nota:p.nota||'',maq:m[i]})).sort((a,b)=>a.maq-b.maq);
+  }
+  return grupos;
+}
+function sortear(){
+  msg('sMsg','');
+  const g=$('sGrupo').value,t=$('sTurno').value;
+  const pacs=S.patients.filter(p=>selIds('sPac').includes(p.id));
+  const enfs=S.nurses.filter(n=>selIds('sEnf').includes(n.id));
+  const areas=S.areas.filter(a=>selIds('sArea').includes(a.id));
+  if(!pacs.length)return msg('sMsg','Marca al menos un paciente.','err');
+  if(!enfs.length)return msg('sMsg','Marca al menos un enfermero.','err');
+  if(!areas.length)return msg('sMsg','Marca al menos un área.','err');
+  if(enfs.length>areas.length)return msg('sMsg',`Hay ${enfs.length} enfermeros y solo ${areas.length} áreas. Marca más áreas o menos enfermeros (cada enfermero necesita al menos un área).`,'err');
+  const cap=areas.reduce((s,a)=>s+a.maq.length,0);
+  if(pacs.length>cap)return msg('sMsg',`Hay ${pacs.length} pacientes y solo ${cap} máquinas en las áreas marcadas.`,'err');
+
+  // Último reparto del mismo turno para evitar repetir parejas
+  const prev=S.history.filter(h=>h.turno===t).sort((a,b)=>b.saved-a.saved)[0];
+  const pares=new Set();
+  if(prev&&$('sNoRep').checked)prev.grupos.forEach(x=>x.asig.forEach(a=>pares.add(x.nurseId+'|'+a.pid)));
+  const spread=gr=>{const n=gr.map(x=>x.pac.length),c=gr.map(x=>x.carga);return (Math.max(...n)-Math.min(...n))*100+(Math.max(...c)-Math.min(...c));};
+  let mejor=null,mejorScore=Infinity,mejorRep=0;
+  const intentos=pares.size?300:1;
+  for(let i=0;i<intentos;i++){
+    const r=unIntento(pacs,enfs,areas);if(!r)continue;
+    const rep=r.reduce((s,x)=>s+x.pac.filter(p=>pares.has(x.nurse.id+'|'+p.id)).length,0);
+    const score=spread(r)*1000+rep;
+    if(score<mejorScore){mejor=r;mejorScore=score;mejorRep=rep;}
+    if(rep===0&&i>20&&score===spread(r)*1000)break;
+  }
+  if(!mejor)return msg('sMsg','No se pudo hacer el reparto. Revisa las áreas y máquinas.','err');
+  actual={id:uid(),fecha:$('sFecha').value,dia:+g,turno:t,saved:null,
+    grupos:mejor.map(x=>({nurseId:x.nurse.id,nurse:x.nurse.name,areas:x.areas.map(a=>a.name),carga:x.carga,asig:x.asig}))
+      .sort((a,b)=>a.nurse.localeCompare(b.nurse))};
+  let info=`${pacs.length} pacientes · ${enfs.length} enfermeros · ${cap} máquinas.`;
+  if(pares.size)info+=mejorRep?` ⚠️ ${mejorRep} pareja(s) repetida(s) del último reparto (no se pudo evitar).`:' Sin parejas repetidas del último reparto.';
+  if(enfs.length<areas.length)info+=' Algunos enfermeros cubren más de un área.';
+  pintarResultado(actual,info);
+}
+function pintarResultado(r,info){
+  $('resCard').classList.remove('hide');
+  $('pTitle').textContent=`Distribución de pacientes · Turno ${r.turno}`;
+  $('pSub').textContent=fmtFecha(r.fecha);
+  $('resInfo').textContent=info||'';
+  $('resGrid').innerHTML=r.grupos.map(x=>`
+    <div class="nurse">
+      <h3>${esc(x.nurse)} <span>${esc(x.areas.join(', '))} · ${x.asig.length} pac.</span></h3>
+      <table><thead><tr><th style="width:60px">Máq.</th><th>Paciente</th></tr></thead><tbody>
+      ${x.asig.map(a=>`<tr><td><b>${a.maq}</b></td><td>${esc(a.name)}${a.carga==2?'<span class="tag alta">alta</span>':''}${a.nota?`<div class="muted">${esc(a.nota)}</div>`:''}</td></tr>`).join('')||'<tr><td colspan="2" class="muted">Sin pacientes</td></tr>'}
+      </tbody></table>
+    </div>`).join('');
+  $('resCard').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function guardarHist(){
+  if(!actual)return;
+  if(actual.saved){msg('sMsg','Este reparto ya está guardado.','ok');return;}
+  actual.saved=Date.now();
+  S.history.unshift(JSON.parse(JSON.stringify(actual)));
+  if(S.history.length>200)S.history.length=200;
+  save();msg('sMsg','Reparto guardado en el historial.','ok');
+}
+
+/* ---------- Pacientes ---------- */
+function guardarPac(){
+  const name=$('pNombre').value.trim();
+  if(!name)return msg('pMsg','Escribe el nombre.','err');
+  const dias=getDias();
+  if(!dias.length)return msg('pMsg','Marca al menos un día.','err');
+  const data={name,dias,turno:$('pTurno').value,carga:+$('pCarga').value,nota:$('pNota').value.trim()};
+  const id=$('pId').value;
+  if(id){Object.assign(S.patients.find(p=>p.id===id),data);msg('pMsg','Paciente actualizado.','ok');}
+  else{
+    if(S.patients.some(p=>p.name.toLowerCase()===name.toLowerCase()))
+      return msg('pMsg','Ya existe un paciente con ese nombre. Edítalo en la lista.','warn');
+    S.patients.push({id:uid(),...data});msg('pMsg',`${esc(name)} dado de alta.`,'ok');
+  }
+  save();limpiarPac(true);renderPacs();renderSorteo.done=false;
+}
+function setDias(arr){$('pDias').querySelectorAll('input').forEach(i=>{i.checked=arr.includes(+i.value);i.parentNode.classList.toggle('on',i.checked);});}
+function getDias(){return [...$('pDias').querySelectorAll('input:checked')].map(i=>+i.value);}
+function limpiarPac(keep){
+  $('pId').value='';$('pNombre').value='';$('pNota').value='';$('pCarga').value='1';setDias([]);
+  $('pFormTitle').textContent='Dar de alta paciente';$('pCancel').classList.add('hide');
+  if(!keep)msg('pMsg','');
+  $('pNombre').focus();
+}
+function editPac(id){
+  const p=S.patients.find(x=>x.id===id);if(!p)return;
+  $('pId').value=p.id;$('pNombre').value=p.name;setDias(p.dias);$('pTurno').value=p.turno;$('pCarga').value=p.carga||1;$('pNota').value=p.nota||'';
+  $('pFormTitle').textContent='Editar paciente';$('pCancel').classList.remove('hide');msg('pMsg','');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function delPac(id){
+  const p=S.patients.find(x=>x.id===id);
+  if(!confirm(`¿Dar de baja a ${p.name}?`))return;
+  S.patients=S.patients.filter(x=>x.id!==id);save();renderPacs();
+}
+function renderPacs(){
+  const q=$('fTxt').value.trim().toLowerCase(),g=$('fGrupo').value,t=$('fTurno').value;
+  const list=S.patients.filter(p=>(!q||p.name.toLowerCase().includes(q))&&(!g||p.dias.includes(+g))&&(!t||p.turno===t))
+    .sort((a,b)=>String(a.turno).localeCompare(String(b.turno),undefined,{numeric:true})||a.name.localeCompare(b.name));
+  $('pTabla').innerHTML=list.map(p=>`<tr>
+    <td>${esc(p.name)}${p.carga==2?'<span class="tag alta">alta</span>':''}${p.nota?`<div class="muted">${esc(p.nota)}</div>`:''}</td>
+    <td>${diasTxt(p.dias)}</td><td>${esc(p.turno)}</td>
+    <td style="white-space:nowrap;text-align:right"><button class="btn sm sec" onclick="editPac('${p.id}')">Editar</button> <button class="btn sm dan" onclick="delPac('${p.id}')">Baja</button></td></tr>`).join('')
+    ||'<tr><td colspan="4" class="muted">Sin pacientes.</td></tr>';
+  const res=[];for(const tt of S.turnos){const c=Object.keys(DIAS).map(k=>`${DCORTO[k]} ${S.patients.filter(p=>p.dias.includes(+k)&&p.turno===tt).length}`);res.push(`T${tt}: ${c.join(', ')}`);}
+  $('pResumen').textContent=`Total: ${S.patients.length}${res.length?' · '+res.join(' · '):''}`;
+}
+
+/* ---------- Personal y áreas ---------- */
+function addEnf(){
+  const n=$('eNombre').value.trim();if(!n)return;
+  S.nurses.push({id:uid(),name:n});save();$('eNombre').value='';renderPersonal();renderSorteo.done=false;
+}
+function delEnf(id){const n=S.nurses.find(x=>x.id===id);if(!confirm(`¿Eliminar a ${n.name}?`))return;S.nurses=S.nurses.filter(x=>x.id!==id);save();renderPersonal();}
+function renEnf(id){const n=S.nurses.find(x=>x.id===id);const v=prompt('Nombre:',n.name);if(v&&v.trim()){n.name=v.trim();save();renderPersonal();}}
+function addArea(){
+  const name=$('aNombre').value.trim(),maq=parseMaq($('aMaq').value);
+  if(!name)return msg('aMsg','Escribe el nombre del área.','err');
+  if(!maq||!maq.length)return msg('aMsg','Máquinas inválidas. Usa por ejemplo 1-4 o 1,2,5.','err');
+  const usadas=new Set(S.areas.flatMap(a=>a.maq));const dup=maq.filter(m=>usadas.has(m));
+  if(dup.length)return msg('aMsg',`Las máquinas ${dup.join(', ')} ya están en otra área.`,'err');
+  S.areas.push({id:uid(),name,maq});save();$('aNombre').value='';$('aMaq').value='';msg('aMsg','');renderPersonal();renderSorteo.done=false;
+}
+function editArea(id){
+  const a=S.areas.find(x=>x.id===id);
+  const n=prompt('Nombre del área:',a.name);if(n===null)return;
+  const m=prompt('Máquinas (ej. 1-4 o 1,2,5):',a.maq.join(','));if(m===null)return;
+  const maq=parseMaq(m);if(!maq||!maq.length)return alert('Máquinas inválidas.');
+  const usadas=new Set(S.areas.filter(x=>x.id!==id).flatMap(x=>x.maq));const dup=maq.filter(x=>usadas.has(x));
+  if(dup.length)return alert(`Las máquinas ${dup.join(', ')} ya están en otra área.`);
+  a.name=n.trim()||a.name;a.maq=maq;save();renderPersonal();
+}
+function delArea(id){const a=S.areas.find(x=>x.id===id);if(!confirm(`¿Eliminar ${a.name}?`))return;S.areas=S.areas.filter(x=>x.id!==id);save();renderPersonal();}
+function guardarTurnos(){
+  const t=[...new Set($('cTurnos').value.split(',').map(x=>x.trim()).filter(Boolean))];
+  if(!t.length)return alert('Escribe al menos un turno.');
+  S.turnos=t;save();fillSelects();alert('Turnos guardados.');
+}
+function renderPersonal(){
+  $('eTabla').innerHTML=S.nurses.map(n=>`<tr><td>${esc(n.name)}</td><td style="text-align:right;white-space:nowrap"><button class="btn sm sec" onclick="renEnf('${n.id}')">Editar</button> <button class="btn sm dan" onclick="delEnf('${n.id}')">Eliminar</button></td></tr>`).join('')||'<tr><td class="muted">Sin enfermeros.</td></tr>';
+  $('aTabla').innerHTML=S.areas.map(a=>`<tr><td>${esc(a.name)}</td><td>${a.maq.join(', ')} <span class="muted">(${a.maq.length})</span></td><td style="text-align:right;white-space:nowrap"><button class="btn sm sec" onclick="editArea('${a.id}')">Editar</button> <button class="btn sm dan" onclick="delArea('${a.id}')">Eliminar</button></td></tr>`).join('')||'<tr><td colspan="3" class="muted">Sin áreas.</td></tr>';
+  $('cTurnos').value=S.turnos.join(', ');
+}
+function exportar(){
+  const b=new Blob([JSON.stringify(S,null,1)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`respaldo_reparto_hd_${hoy()}.json`;a.click();
+}
+function importar(inp){
+  const f=inp.files[0];if(!f)return;
+  const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.patients)throw 0;
+    if(!confirm('Esto reemplazará los datos actuales. ¿Continuar?'))return;
+    S=migrar(Object.assign({turnos:['3','4'],areas:[],nurses:[],patients:[],history:[]},d));save();renderSorteo.done=false;fillSelects();renderAll();alert('Respaldo cargado.');
+  }catch(e){alert('Archivo no válido.');}inp.value='';};r.readAsText(f);
+}
+
+/* ---------- Historial ---------- */
+function renderHist(){
+  $('hTabla').innerHTML=S.history.map(h=>`<tr><td><b>${fmtFecha(h.fecha)}</b><div class="muted">Turno ${esc(h.turno)} · ${h.grupos.reduce((s,x)=>s+x.asig.length,0)} pacientes · ${h.grupos.length} enfermeros</div></td>
+  <td style="text-align:right;white-space:nowrap"><button class="btn sm sec" onclick="verHist('${h.id}')">Ver / imprimir</button> <button class="btn sm dan" onclick="delHist('${h.id}')">Borrar</button></td></tr>`).join('')||'<tr><td class="muted">Aún no hay repartos guardados.</td></tr>';
+}
+function verHist(id){
+  const h=S.history.find(x=>x.id===id);if(!h)return;
+  actual=JSON.parse(JSON.stringify(h));
+  document.querySelector('nav button[data-t=sorteo]').click();
+  pintarResultado(actual,'Reparto guardado del historial.');
+}
+function delHist(id){if(!confirm('¿Borrar este reparto del historial?'))return;S.history=S.history.filter(x=>x.id!==id);save();renderHist();}
+
+function renderAll(){fillSelects();renderSorteo();renderPacs();renderPersonal();renderHist();}
+
+/* ---------- Inicio ---------- */
+$('sFecha').value=hoy();
+fillSelects();
+{const g=grupoDeFecha(hoy());if(g)$('sGrupo').value=g;}
+renderAll();
+</script>
+</body>
+</html>

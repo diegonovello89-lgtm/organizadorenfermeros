@@ -119,7 +119,9 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
       <div class="btns" style="margin:0">
         <button class="btn sec" onclick="sortear()">🎲 Volver a sortear</button>
         <button class="btn" onclick="guardarHist()">💾 Guardar</button>
-        <button class="btn" onclick="window.print()">🖨️ Imprimir</button>
+        <button class="btn" onclick="pdfRepartoActual(false)">📄 PDF</button>
+        <button class="btn sec" onclick="pdfRepartoActual(true)">📤 Compartir</button>
+        <button class="btn sec" onclick="window.print()">🖨️ Imprimir</button>
       </div>
     </div>
     <div id="resInfo" class="muted noprint" style="margin-bottom:8px"></div>
@@ -292,10 +294,11 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
   <div id="etqBar">
     <button class="btn sec" onclick="cerrarVista()">✕ Cerrar</button>
     <span id="etqTitulo"></span>
-    <button class="btn sec" onclick="compartirVista()">📤 Compartir</button>
-    <button class="btn" style="background:#fff;color:var(--pri)" onclick="window.print()">🖨️ Imprimir</button>
+    <button class="btn" style="background:#fff;color:var(--pri)" onclick="pdfVista(false)">📄 PDF</button>
+    <button class="btn sec" onclick="pdfVista(true)">📤 Compartir</button>
+    <button class="btn sec" onclick="window.print()">🖨️</button>
   </div>
-  <p id="etqNota">Vista previa. Al imprimir usa papel carta, escala 100 % y sin márgenes si tu impresora lo permite.</p>
+  <p id="etqNota">Vista previa. En iPhone usa <b>📄 PDF</b> y desde el PDF toca compartir → Imprimir. Papel carta, tamaño real (100 %).</p>
   <div id="etqPages"></div>
 </div>
 <script>
@@ -716,7 +719,8 @@ function etiquetaHTML(T,s,d,c,prueba){
 }
 function imprimirEt(prueba){
   const c=prueba?leerCfgEt():cfgEt();
-  const T=TIPOS[prueba?$('hTipo').value:c.tipo];
+  const tipo=prueba?$('hTipo').value:c.tipo;
+  const T=TIPOS[tipo];
   const partes=f=>f?f.split('-'):['','',''];
   const mk=(name,fecha,fnac)=>{const [fy,fm,fd]=partes(fecha),[ny,nm,nd]=partes(fnac);return {name,fd,fm,fy,nd,nm,ny};};
   let datos;
@@ -730,11 +734,12 @@ function imprimirEt(prueba){
   }
   const slots=T.slots(c),n=T.porHoja;
   const ini=prueba?0:Math.min(n-1,Math.max(0,(parseInt($('hInicio').value)||1)-1));
+  // Modelo de páginas: cada elemento es una etiqueta {k:'lab',s,d} o un encabezado {k:'enc',x,y,w,txt}
   const paginas=[],usados=[];
+  const pag=pg=>(paginas[pg]=paginas[pg]||[]);
   const usar=(pg,k)=>(usados[pg]=usados[pg]||new Set()).add(k);
   const agrupar=!prueba&&$('hAgrupar').checked&&datos.some(d=>d.nurse);
   if(agrupar){
-    // Cada enfermero ocupa una columna (o varias si no le cabe); el nombre va arriba de la columna
     const filas=n/T.cols,orden=[];
     for(const d of datos){let g=orden.find(x=>x.nurse===d.nurse);if(!g)orden.push(g={nurse:d.nurse,items:[]});g.items.push(d);}
     orden.sort((a,b)=>a.nurse.localeCompare(b.nurse));
@@ -743,42 +748,66 @@ function imprimirEt(prueba){
       g.items.sort((a,b)=>(a.maq||0)-(b.maq||0));
       for(let k=0;k<g.items.length;k+=filas){
         const pg=Math.floor(col/T.cols),cc=col%T.cols,top=slots[cc];
-        const P=(paginas[pg]=paginas[pg]||[]);
-        P.push(`<div class="enc" style="left:${top.x.toFixed(2)}mm;top:${Math.max(0,top.y-7).toFixed(2)}mm;width:${top.w}mm">${esc(g.nurse||'Sin enfermero')}${k?' (cont.)':''}</div>`);
-        g.items.slice(k,k+filas).forEach((d,r)=>{P.push(etiquetaHTML(T,slots[r*T.cols+cc],d,c,prueba));usar(pg,r*T.cols+cc);});
+        pag(pg).push({k:'enc',x:top.x,y:Math.max(0,top.y-7),w:top.w,txt:(g.nurse||'Sin enfermero')+(k?' (cont.)':'')});
+        g.items.slice(k,k+filas).forEach((d,r)=>{pag(pg).push({k:'lab',s:slots[r*T.cols+cc],d});usar(pg,r*T.cols+cc);});
         col++;
       }
     }
   }else{
-    datos.forEach((d,k)=>{const i=ini+k;(paginas[Math.floor(i/n)]=paginas[Math.floor(i/n)]||[]).push(etiquetaHTML(T,slots[i%n],d,c,prueba));usar(Math.floor(i/n),i%n);});
+    datos.forEach((d,k)=>{const i=ini+k,pg=Math.floor(i/n);pag(pg).push({k:'lab',s:slots[i%n],d});usar(pg,i%n);});
   }
-  // Rellenar los espacios libres con etiquetas en blanco (solo formato) para corregir a mano
   let blancas=0;
   if(!prueba&&c.modo==='completa'&&$('hBlancas').checked){
     paginas.forEach((P,pg)=>{for(let k=0;k<n;k++){
       if(usados[pg]&&usados[pg].has(k))continue;
       if(pg===0&&!agrupar&&k<ini)continue; // etiquetas ya despegadas
-      P.push(etiquetaHTML(T,slots[k],{blanca:true},c,false));blancas++;}});
+      P.push({k:'lab',s:slots[k],d:{blanca:true}});blancas++;}});
   }
+  for(let i=0;i<paginas.length;i++)paginas[i]=paginas[i]||[];
+  const fecha=(prueba?hoy():$('hFecha').value)||hoy();
+  abrirVista({tipo,T,c,prueba,paginas,
+    nombre:`etiquetas_${T.nombre.toLowerCase()}_${fecha}`,
+    titulo:`${T.nombre} · ${datos.length} etiqueta(s)${blancas?` + ${blancas} en blanco`:''} · ${paginas.length} hoja(s)`});
+  if(!prueba){
+    const sig=(ini+datos.length)%n+1;
+    msg('hMsg',`${datos.length} etiqueta(s)${blancas?` + ${blancas} en blanco`:''} en ${paginas.length} hoja(s).${agrupar?' Agrupadas por enfermero.':sig>1?` Si vuelves a usar la última hoja, la siguiente libre es la #${sig}.`:''}`,'ok');
+  }
+}
+// Texto que va en cada etiqueta, con su tamaño ya ajustado (lo usan la vista previa y el PDF)
+function textosEtiqueta(T,s,d,c){
+  if(d.blanca)return [];
   const fs=T.fs(c);
-  const reglas=P=>`${P}.pag{position:relative;width:${T.W}mm;height:${T.H}mm;overflow:hidden;background:#fff;font-family:Arial,Helvetica,sans-serif;color:#000;transform-origin:0 0}
+  return T.campos(d,c).filter(f=>f[2]).map(([x,y,txt,cen,tipo])=>{
+    let size=fs;
+    if(tipo==='n'){const max=(s.w-x-1)/(fs*0.6);if(txt.length>max)size=fs*(txt.length>max*1.25?0.72:0.85);}
+    return {x,y,txt:String(txt),cen:!!cen,size,maxW:s.w-x-0.8};
+  });
+}
+
+/* ---------- Vista previa (HTML) ---------- */
+let vista=null;
+function htmlVista(v){
+  const {T,c,prueba}=v;
+  const img=(c.modo==='completa'||prueba)?`<img src="${T.img()}" class="${c.modo==='completa'?'':'guia'}" alt="">`:'';
+  return v.paginas.map(P=>`<div class="pw"><div class="pag">${P.map(it=>{
+    if(it.k==='enc')return `<div class="enc" style="left:${it.x.toFixed(2)}mm;top:${it.y.toFixed(2)}mm;width:${it.w}mm">${esc(it.txt)}</div>`;
+    const s=it.s;
+    return `<div class="slot" style="left:${s.x.toFixed(2)}mm;top:${s.y.toFixed(2)}mm;width:${s.w}mm;height:${s.h}mm">${img}${textosEtiqueta(T,s,it.d,c).map(t=>
+      `<span class="t${t.cen?' cen':''}" style="left:${t.x.toFixed(2)}mm;top:${t.y.toFixed(2)}mm;font-size:${t.size.toFixed(3)}mm;max-width:${t.maxW.toFixed(2)}mm">${esc(t.txt)}</span>`).join('')}</div>`;
+  }).join('')}</div></div>`).join('');
+}
+function abrirVista(v){
+  vista=v;
+  const T=v.T,P='#etqPages ';
+  let st=$('etqStyle');if(!st){st=document.createElement('style');st.id='etqStyle';document.head.appendChild(st);}
+  st.textContent=`${P}.pag{position:relative;width:${T.W}mm;height:${T.H}mm;overflow:hidden;background:#fff;font-family:Helvetica,Arial,sans-serif;color:#000;transform-origin:0 0}
   ${P}.pag *{box-sizing:border-box}
   ${P}.slot{position:absolute;overflow:hidden}
   ${P}.slot img{position:absolute;left:0;top:0;width:100%;height:100%}
   ${P}.slot img.guia{opacity:.35}
-  ${P}.t{position:absolute;white-space:nowrap;font-size:${fs}mm;font-weight:bold;line-height:1;transform:translateY(-58%);overflow:hidden;text-overflow:ellipsis}
+  ${P}.t{position:absolute;white-space:nowrap;font-weight:bold;line-height:1;transform:translateY(-58%);overflow:hidden;text-overflow:ellipsis}
   ${P}.t.cen{transform:translate(-50%,-58%)}
   ${P}.enc{position:absolute;height:6.5mm;display:flex;align-items:flex-end;justify-content:center;font-size:4mm;font-weight:bold;white-space:nowrap;overflow:hidden}
-  ${P}.t.chico{font-size:${fs*0.85}mm}${P}.t.chico2{font-size:${fs*0.72}mm}`;
-  const cuerpo=paginas.map(p=>`<div class="pw"><div class="pag">${(p||[]).join('')}</div></div>`).join('');
-  // Archivo independiente (para Compartir)
-  const cssSolo=`@page{size:${T.hoja};margin:0}html,body{margin:0;padding:0}${reglas('')}
-  .pag{page-break-after:always;break-after:page}.pw:last-child .pag{page-break-after:auto;break-after:auto}
-  @media screen{body{background:#888;padding:10px}.pw{margin:0 auto 10px;width:max-content;box-shadow:0 2px 8px #0005}}`;
-  const nombre=`etiquetas_${T.nombre.toLowerCase()}_${(prueba?hoy():$('hFecha').value)||hoy()}.html`;
-  const solo=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Etiquetas ${T.nombre}</title><style>${cssSolo}</style></head><body>${cuerpo}</body></html>`;
-  // Vista dentro de la misma página (funciona en iPhone/Android)
-  const cssVista=`${reglas('#etqPages ')}
   @media print{@page{size:${T.hoja};margin:0}
     body.etq-print>*:not(#etqView){display:none!important}
     body.etq-print{background:#fff!important;margin:0!important;padding:0!important}
@@ -788,26 +817,15 @@ function imprimirEt(prueba){
     #etqPages .pw{width:auto!important;height:auto!important;margin:0!important;box-shadow:none!important;overflow:visible!important}
     #etqPages .pag{transform:none!important;page-break-after:always;break-after:page}
     #etqPages .pw:last-child .pag{page-break-after:auto;break-after:auto}}`;
-  abrirVista({css:cssVista,html:cuerpo,solo,nombre,W:T.W,H:T.H,titulo:`${T.nombre} · ${datos.length} etiqueta(s)${blancas?` + ${blancas} en blanco`:''} · ${paginas.length} hoja(s)`});
-  if(!prueba){
-    const sig=(ini+datos.length)%n+1;
-    msg('hMsg',`${datos.length} etiqueta(s)${blancas?` + ${blancas} en blanco`:''} en ${paginas.length} hoja(s).${agrupar?' Agrupadas por enfermero.':sig>1?` Si vuelves a usar la última hoja, la siguiente libre es la #${sig}.`:''}`,'ok');
-  }
-}
-let vista=null;
-function abrirVista(v){
-  vista=v;
-  let st=$('etqStyle');if(!st){st=document.createElement('style');st.id='etqStyle';document.head.appendChild(st);}
-  st.textContent=v.css;
   $('etqTitulo').textContent=v.titulo;
-  $('etqPages').innerHTML=v.html;
+  $('etqPages').innerHTML=htmlVista(v);
   document.body.classList.add('etq-print');
   $('etqView').classList.remove('hide');$('etqView').scrollTop=0;
   escalarVista();
 }
 function escalarVista(){
   if(!vista||$('etqView').classList.contains('hide'))return;
-  const k=96/25.4,w=vista.W*k,h=vista.H*k;
+  const k=96/25.4,w=vista.T.W*k,h=vista.T.H*k;
   const s=Math.min(1,($('etqView').clientWidth-20)/w);
   $('etqPages').querySelectorAll('.pw').forEach(pw=>{pw.style.width=(w*s)+'px';pw.style.height=(h*s)+'px';pw.firstElementChild.style.transform=`scale(${s})`;});
 }
@@ -818,14 +836,139 @@ function cerrarVista(){
   const st=$('etqStyle');if(st)st.remove();
   vista=null;
 }
-async function compartirVista(){
-  if(!vista)return;
-  const f=new File([vista.solo],vista.nombre,{type:'text/html'});
-  if(navigator.canShare&&navigator.canShare({files:[f]})){
-    try{await navigator.share({files:[f],title:'Etiquetas'});}catch(e){}
-  }else{
-    const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;document.body.appendChild(a);a.click();a.remove();
+
+/* ---------- PDF (generado aquí mismo, sin internet) ---------- */
+const PDFJPG={};
+function prepararJpg(key,src){
+  const im=new Image();
+  im.onload=()=>{const cv=document.createElement('canvas');cv.width=im.naturalWidth;cv.height=im.naturalHeight;
+    const x=cv.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,cv.width,cv.height);x.drawImage(im,0,0);
+    PDFJPG[key]={w:cv.width,h:cv.height,bin:atob(cv.toDataURL('image/jpeg',0.92).split(',')[1])};};
+  im.src=src;
+}
+let _ctxMed=null;
+function anchoTxt(txt,bold){ // ancho en unidades de tamaño de letra (1 = 1 em)
+  if(!_ctxMed)_ctxMed=document.createElement('canvas').getContext('2d');
+  _ctxMed.font=`${bold?'bold ':''}100px Helvetica, Arial, sans-serif`;
+  return _ctxMed.measureText(txt).width/100;
+}
+function winAnsi(str){
+  const esp={'…':'\x85','–':'\x96','—':'\x97','‘':'\x91','’':'\x92','“':'\x93','”':'\x94','€':'\x80','•':'\x95'};
+  let o='';
+  for(const ch of String(str)){const c=ch.charCodeAt(0);
+    o+=esp[ch]||((c>=32&&c<127)||(c>=160&&c<256)?ch:'?');}
+  return o.replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)');
+}
+function recortar(txt,size,maxW,bold){ // recorta con "…" si no cabe (mm)
+  if(anchoTxt(txt,bold)*size<=maxW)return txt;
+  while(txt.length>1&&anchoTxt(txt+'…',bold)*size>maxW)txt=txt.slice(0,-1);
+  return txt.trimEnd()+'…';
+}
+// paginas: [{W,H (mm), ops: [string]}]; imgs: claves de PDFJPG usadas
+function armarPDF(paginas,imgs){
+  const objs=[null,null],add=s=>{objs.push(s);return objs.length;};
+  const fB=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  const fR=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  const gs=add('<< /Type /ExtGState /ca 0.35 /CA 0.35 >>');
+  const xo=[];
+  for(const key of imgs){const j=PDFJPG[key];if(!j)continue;
+    xo.push(`/I${key} ${add(`<< /Type /XObject /Subtype /Image /Width ${j.w} /Height ${j.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${j.bin.length} >>\nstream\n${j.bin}\nendstream`)} 0 R`);}
+  const kids=[];
+  for(const p of paginas){
+    const k=72/25.4,ops=p.ops.join('\n');
+    const cs=add(`<< /Length ${ops.length} >>\nstream\n${ops}\nendstream`);
+    kids.push(add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${(p.W*k).toFixed(2)} ${(p.H*k).toFixed(2)}] /Resources << /Font << /F1 ${fB} 0 R /F2 ${fR} 0 R >> /XObject << ${xo.join(' ')} >> /ExtGState << /G1 ${gs} 0 R >> >> /Contents ${cs} 0 R >>`));
   }
+  objs[0]='<< /Type /Catalog /Pages 2 0 R >>';
+  objs[1]=`<< /Type /Pages /Kids [${kids.map(i=>i+' 0 R').join(' ')}] /Count ${kids.length} >>`;
+  let out='%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';const off=[];
+  objs.forEach((o,i)=>{off.push(out.length);out+=`${i+1} 0 obj\n${o}\nendobj\n`;});
+  const xref=out.length;
+  out+=`xref\n0 ${objs.length+1}\n0000000000 65535 f \n`+off.map(o=>String(o).padStart(10,'0')+' 00000 n \n').join('');
+  out+=`trailer\n<< /Size ${objs.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  const b=new Uint8Array(out.length);for(let i=0;i<out.length;i++)b[i]=out.charCodeAt(i)&255;
+  return new Blob([b],{type:'application/pdf'});
+}
+// Ayudantes para dibujar en mm con origen arriba-izquierda
+function lienzo(W,H){
+  const k=72/25.4,ops=[],Y=y=>((H-y)*k).toFixed(2),X=x=>(x*k).toFixed(2);
+  return {W,H,ops,
+    texto(x,y,txt,size,bold,cen){ // y = línea base en mm
+      if(!txt)return;const w=anchoTxt(txt,bold)*size;
+      ops.push(`BT /${bold?'F1':'F2'} ${(size*k).toFixed(2)} Tf ${X(cen?x-w/2:x)} ${Y(y)} Td (${winAnsi(txt)}) Tj ET`);},
+    imagen(key,x,y,w,h,tenue){ops.push(`q ${tenue?'/G1 gs ':''}${(w*k).toFixed(2)} 0 0 ${(h*k).toFixed(2)} ${X(x)} ${Y(y+h)} cm /I${key} Do Q`);},
+    caja(x,y,w,h,relleno){ops.push(`${relleno!=null?relleno+' g ':''}0.6 w ${X(x)} ${Y(y+h)} ${(w*k).toFixed(2)} ${(h*k).toFixed(2)} re ${relleno!=null?'B':'S'} 0 g`);}};
+}
+function pdfEtiquetas(v){
+  const {T,c,prueba,tipo}=v;
+  const conImg=c.modo==='completa'||prueba,tenue=c.modo!=='completa';
+  const pags=v.paginas.map(P=>{
+    const L=lienzo(T.W,T.H);
+    for(const it of P){
+      if(it.k==='enc'){L.texto(it.x+it.w/2,it.y+5.2,recortar(it.txt,4,it.w,true),4,true,true);continue;}
+      const s=it.s;
+      if(conImg)L.imagen(tipo,s.x,s.y,s.w,s.h,tenue);
+      for(const t of textosEtiqueta(T,s,it.d,c)){
+        const txt=t.cen?t.txt:recortar(t.txt,t.size,t.maxW,true);
+        L.texto(s.x+t.x,s.y+t.y+0.2665*t.size,txt,t.size,true,t.cen);
+      }
+    }
+    return L;
+  });
+  return armarPDF(pags,conImg?[tipo]:[]);
+}
+function pdfReparto(r){
+  const W=279.4,H=215.9,m=10,pags=[];
+  const g=r.grupos,n=Math.max(1,g.length),cw=(W-2*m)/n;
+  const titulo=`Distribución de pacientes · Turno ${r.turno}`,sub=fmtFecha(r.fecha);
+  const fs=3.4,lh=4.2,mqW=7;
+  // Partir cada nombre en renglones que quepan en la columna
+  const partir=(txt,maxW)=>{const pal=txt.split(' '),out=[];let l='';
+    for(const p of pal){const t=l?l+' '+p:p;if(anchoTxt(t,false)*fs<=maxW||!l)l=t;else{out.push(l);l=p;}}
+    if(l)out.push(l);return out.map(x=>recortar(x,fs,maxW,false));};
+  const maxN=Math.max(1,...g.map(x=>x.asig.length));
+  const filas=Array.from({length:maxN},(_,i)=>g.map(x=>{const a=x.asig[i];if(!a)return null;
+    const extra=(a.carga==2?' (alta)':'')+(a.aislado?' (aislado)':'');
+    return {maq:String(a.maq),lineas:partir(a.name+extra,cw-mqW-2)};}));
+  let L=null,y=0;
+  const nuevaHoja=()=>{L=lienzo(W,H);pags.push(L);
+    L.texto(m,m+5,titulo,5,true);L.texto(m,m+10,sub,3.5,false);
+    y=m+14;const hh=11;
+    g.forEach((x,j)=>{const cx=m+j*cw;L.caja(cx,y,cw,hh,0.9);
+      L.texto(cx+2,y+5,recortar(x.nurse+(x.aislado?' (aislado)':''),4,cw-4,true),4,true);
+      L.texto(cx+2,y+9,recortar(`${x.areas.join(', ')} · ${x.asig.length} pac.`,2.8,cw-4,false),2.8,false);});
+    y+=hh;};
+  nuevaHoja();
+  for(const f of filas){
+    const h=Math.max(...f.map(cel=>cel?cel.lineas.length:1))*lh+2.4;
+    if(y+h>H-m)nuevaHoja();
+    f.forEach((cel,j)=>{const cx=m+j*cw;L.caja(cx,y,cw,h);
+      if(!cel)return;
+      L.texto(cx+1.5,y+lh,cel.maq,fs,true);
+      cel.lineas.forEach((ln,i)=>L.texto(cx+1.5+mqW,y+lh+i*lh,ln,fs,false));});
+    y+=h;
+  }
+  return armarPDF(pags,[]);
+}
+function entregarPDF(blob,nombre,compartir){
+  const f=new File([blob],nombre+'.pdf',{type:'application/pdf'});
+  if(compartir&&navigator.canShare&&navigator.canShare({files:[f]})){
+    navigator.share({files:[f],title:nombre}).catch(()=>{});return;
+  }
+  const url=URL.createObjectURL(f),a=document.createElement('a');
+  a.href=url;
+  if(/iPhone|iPad|iPod/.test(navigator.userAgent)||compartir===false)a.target='_blank';else a.download=f.name;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+function pdfVista(compartir){
+  if(!vista)return;
+  if(!PDFJPG[vista.tipo]&&(vista.c.modo==='completa'||vista.prueba))return alert('Preparando el formato, intenta de nuevo en un segundo.');
+  entregarPDF(pdfEtiquetas(vista),vista.nombre,compartir);
+}
+function pdfRepartoActual(compartir){
+  if(!actual)return;
+  entregarPDF(pdfReparto(actual),`reparto_turno${actual.turno}_${actual.fecha||hoy()}`,compartir);
 }
 
 /* ---------- Importar desde Excel (copiar y pegar) ---------- */
@@ -940,6 +1083,7 @@ $('sFecha').value=hoy();
 fillSelects();
 {const g=grupoDeFecha(hoy());if(g)$('sGrupo').value=g;}
 renderAll();
+prepararJpg('hep',ETQ_IMG);prepararJpg('sol',SOL_IMG);
 </script>
 </body>
 </html>

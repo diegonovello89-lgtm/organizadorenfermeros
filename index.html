@@ -111,10 +111,18 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
       <select id="sModo" onchange="S.modoSorteo=this.value;save();modoAyuda()">
         <option value="azar">Pacientes al azar entre enfermeros (equitativo)</option>
         <option value="area">Pacientes fijos en su área · rotan los enfermeros</option>
+        <option value="fijo">Todo fijo: enfermeros fijos del mes, sin sorteo</option>
       </select></div>
     <p class="muted" id="sModoAyuda"></p>
+    <div id="planBox" class="hide" style="border:1px solid var(--bd);border-radius:9px;padding:10px;margin-top:8px">
+      <h2 id="planTitulo" style="font-size:15px;margin:0 0 6px"></h2>
+      <p class="muted" style="margin:0 0 8px">Elige a mano qué enfermero tiene cada área. Se guarda para todo el mes en este turno. Cambia la fecha a otro mes para preparar el siguiente.</p>
+      <table><tbody id="planTabla"></tbody></table>
+      <p class="muted" id="planInfo"></p>
+      <div class="btns" style="margin-top:4px"><button class="btn sm sec" onclick="copiarPlanAnterior()">Copiar del mes anterior</button></div>
+    </div>
     <label class="noprint" style="display:flex;gap:6px;align-items:center;color:var(--tx);margin-top:8px"><input type="checkbox" id="sNoRep" checked> <span id="sNoRepTxt">Evitar repetir enfermero–paciente del último reparto de este turno</span></label>
-    <button class="btn big" style="margin-top:12px" onclick="sortear()">🎲 Sortear</button>
+    <button class="btn big" style="margin-top:12px" onclick="sortear()" id="btnSortear">🎲 Sortear</button>
     <div id="sMsg"></div>
   </div>
   <div class="card hide" id="resCard">
@@ -122,7 +130,7 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
     <div class="noprint" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
       <h2 style="margin:0">Resultado</h2>
       <div class="btns" style="margin:0">
-        <button class="btn sec" onclick="sortear()">🎲 Volver a sortear</button>
+        <button class="btn sec" onclick="sortear()" id="btnResortear">🎲 Volver a sortear</button>
         <button class="btn" onclick="guardarHist()">💾 Guardar</button>
         <button class="btn" onclick="pdfRepartoActual(false)">📄 PDF</button>
         <button class="btn sec" onclick="pdfRepartoActual(true)">📤 Compartir</button>
@@ -400,8 +408,8 @@ function renderSorteo(){
   renderSorteo.done=true;renderSorteo.key=g+t;
   contar();
 }
-$('sFecha').onchange=()=>{const g=grupoDeFecha($('sFecha').value);if(g)$('sGrupo').value=g;renderSorteo();};
-$('sGrupo').onchange=renderSorteo;$('sTurno').onchange=renderSorteo;
+$('sFecha').onchange=()=>{const g=grupoDeFecha($('sFecha').value);if(g)$('sGrupo').value=g;renderSorteo();renderPlan();};
+$('sGrupo').onchange=renderSorteo;$('sTurno').onchange=()=>{renderSorteo();renderPlan();};
 
 /* ---------- Algoritmo ---------- */
 function unIntento(pacs,enfs,areas,modo){
@@ -490,6 +498,15 @@ function sortear(){
   if(!pacs.length)return msg('sMsg','Marca al menos un paciente.','err');
   if(!enfs.length)return msg('sMsg','Marca al menos un enfermero.','err');
   if(!areas.length)return msg('sMsg','Marca al menos un área.','err');
+  if(modo==='fijo'){
+    const {grupos:gr,av}=repartoFijo(pacs,enfs,areas,planDe($('sFecha').value,t));
+    actual={id:uid(),fecha:$('sFecha').value,dia:+g,turno:t,saved:null,modo,
+      grupos:gr.map(x=>({nurseId:x.nurse.id,nurse:x.nurse.name,areas:x.areas.map(a=>a.name),areaIds:x.areas.map(a=>a.id),carga:x.carga,aislado:!!x.aislado,asig:x.asig}))
+        .sort((a,b)=>a.nurse.localeCompare(b.nurse))};
+    pintarResultado(actual,`${pacs.length} pacientes · ${enfs.length} enfermeros · reparto fijo de ${nombreMes($('sFecha').value)}.`);
+    if(av.length)msg('sMsg',av.map(esc).join('<br>'),av.some(x=>x.startsWith('⚠️'))?'err':'warn');
+    return;
+  }
   if(enfs.length>areas.length)return msg('sMsg',`Hay ${enfs.length} enfermeros y solo ${areas.length} áreas. Marca más áreas o menos enfermeros (cada enfermero necesita al menos un área).`,'err');
   const cap=areas.reduce((s,a)=>s+a.maq.length,0);
   if(pacs.length>cap)return msg('sMsg',`Hay ${pacs.length} pacientes y solo ${cap} máquinas en las áreas marcadas.`,'err');
@@ -1181,14 +1198,106 @@ function impAplicar(){
   renderSorteo.done=false;fillSelects();renderPacs();
 }
 
+/* ---------- Modo todo fijo: enfermeros fijos por mes (manual) ---------- */
+const MESES_N=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+function planKey(fecha,t){return (fecha||hoy()).slice(0,7)+'|'+t;}
+function planDe(fecha,t){S.planes=S.planes||{};return S.planes[planKey(fecha,t)]||{};}
+function nombreMes(fecha){const [y,m]=(fecha||hoy()).split('-');return `${MESES_N[+m-1]} ${y}`;}
+function renderPlan(){
+  const box=$('planBox');
+  if($('sModo').value!=='fijo'){box.classList.add('hide');return;}
+  box.classList.remove('hide');
+  const f=$('sFecha').value||hoy(),t=$('sTurno').value,plan=planDe(f,t);
+  $('planTitulo').textContent=`Enfermeros fijos de ${nombreMes(f)} · Turno ${t}`;
+  const opts=sel=>'<option value="">— sin asignar —</option>'+S.nurses.map(n=>`<option value="${n.id}" ${n.id===sel?'selected':''}>${esc(n.name)}</option>`).join('');
+  $('planTabla').innerHTML=S.areas.map(a=>`<tr><td><b>${esc(a.name)}</b> <span class="muted">(${a.maq.join(', ')})</span></td>
+    <td><select onchange="setPlan('${a.id}',this.value)">${opts(plan[a.id]||'')}</select></td></tr>`).join('')
+    ||'<tr><td class="muted">Primero da de alta las áreas en “Personal y áreas”.</td></tr>';
+  const asignadas=Object.values(plan).filter(Boolean).length;
+  $('planInfo').textContent=asignadas?`${asignadas} de ${S.areas.length} áreas con enfermero fijo.`:'Aún no hay enfermeros fijos para este mes y turno.';
+}
+function setPlan(areaId,nurseId){
+  const k=planKey($('sFecha').value,$('sTurno').value);
+  S.planes=S.planes||{};const p=S.planes[k]=S.planes[k]||{};
+  if(nurseId)p[areaId]=nurseId;else delete p[areaId];
+  save();renderPlan();
+}
+function copiarPlanAnterior(){
+  const f=$('sFecha').value||hoy(),t=$('sTurno').value;
+  const d=new Date(f+'T12:00');d.setDate(1);d.setMonth(d.getMonth()-1);
+  const prev=d.toISOString().slice(0,10);
+  const src=planDe(prev,t);
+  if(!Object.keys(src).length)return alert(`No hay enfermeros fijos guardados en ${nombreMes(prev)} para el turno ${t}.`);
+  if(Object.keys(planDe(f,t)).length&&!confirm('Esto reemplaza la asignación de este mes. ¿Continuar?'))return;
+  S.planes[planKey(f,t)]={...src};save();renderPlan();
+}
+function repartoFijo(pacs,enfs,areas,plan){
+  const av=[],porNombre=(a,b)=>a.name.localeCompare(b.name);
+  const presente=new Set(enfs.map(n=>n.id));
+  const grupos=[],G=n=>{let g=grupos.find(x=>x.nurse===n);if(!g)grupos.push(g={nurse:n,areas:[],maq:[],pac:[],carga:0});return g;};
+  const dueno=new Map();
+  // 1) Áreas a su enfermero fijo; si no vino o no hay, a quien cubre
+  const sinCubrir=[];
+  for(const a of areas){
+    const n=S.nurses.find(x=>x.id===plan[a.id]);
+    if(n&&presente.has(n.id)){G(n).areas.push(a);dueno.set(a,n);}
+    else sinCubrir.push({a,fijo:n});
+  }
+  for(const {a,fijo} of sinCubrir){
+    const libres=enfs.filter(n=>!grupos.some(g=>g.nurse===n&&g.areas.length)).sort(porNombre);
+    const n=libres[0]||grupos.slice().sort((x,y)=>x.areas.reduce((s,z)=>s+z.maq.length,0)-y.areas.reduce((s,z)=>s+z.maq.length,0)||porNombre(x.nurse,y.nurse))[0]?.nurse||enfs.slice().sort(porNombre)[0];
+    G(n).areas.push(a);dueno.set(a,n);
+    av.push(fijo?`${a.name}: ${fijo.name} no vino, la cubre ${n.name}.`:`${a.name} no tiene enfermero fijo este mes; la cubre ${n.name}.`);
+  }
+  for(const n of enfs)if(!grupos.some(g=>g.nurse===n))av.push(`${n.name} está presente pero no tiene área asignada.`);
+  grupos.forEach(g=>g.maq=g.areas.flatMap(a=>a.maq));
+  // 2) Pacientes: máquina fija > área fija > donde haya lugar (siempre en el mismo orden, sin azar)
+  const ocupada=new Map();
+  const areaDeMaq=m=>areas.find(a=>a.maq.includes(+m));
+  const libreEn=a=>a.maq.find(m=>!ocupada.has(m));
+  const colocar=(p,a,m)=>{const g=G(dueno.get(a));ocupada.set(m,p);g.pac.push(p);g.carga+=(p.carga||1);p._m=m;};
+  const orden=pacs.slice().sort(porNombre);
+  const sinLugar=[];
+  for(const p of orden.filter(p=>p.maqFija)){
+    const a=areaDeMaq(p.maqFija);
+    if(!a){av.push(`${p.name}: su máquina fija ${p.maqFija} no está en las áreas marcadas.`);sinLugar.push(p);continue;}
+    if(ocupada.has(+p.maqFija)){av.push(`Máquina ${p.maqFija}: es fija de ${ocupada.get(+p.maqFija).name} y de ${p.name}.`);sinLugar.push(p);continue;}
+    colocar(p,a,+p.maqFija);
+  }
+  for(const p of orden.filter(p=>!p.maqFija&&p.areaFija)){
+    const a=areas.find(x=>x.id===p.areaFija);const m=a&&libreEn(a);
+    if(!a){av.push(`${p.name}: su área fija no está marcada hoy.`);sinLugar.push(p);continue;}
+    if(m==null){av.push(`${p.name}: ${a.name} ya está llena.`);sinLugar.push(p);continue;}
+    colocar(p,a,m);
+  }
+  const resto=orden.filter(p=>!p.maqFija&&!p.areaFija).concat(sinLugar);
+  if(resto.some(p=>!p.maqFija&&!p.areaFija))av.push(`Sin área ni máquina fija (acomodados donde hubo lugar): ${resto.filter(p=>!p.maqFija&&!p.areaFija).map(p=>p.name).join(', ')}.`);
+  for(const p of resto){
+    const cand=grupos.filter(g=>g.areas.some(a=>libreEn(a)!=null)).sort((x,y)=>x.pac.length-y.pac.length||porNombre(x.nurse,y.nurse));
+    if(!cand.length){av.push(`${p.name}: no hay máquinas libres.`);continue;}
+    const a=cand[0].areas.find(a=>libreEn(a)!=null);colocar(p,a,libreEn(a));
+  }
+  // 3) Avisos de condiciones que el acomodo fijo no cumple
+  for(const g of grupos)for(const p of g.pac){
+    if((p.noEnf||[]).includes(g.nurse.id))av.push(`⚠️ ${p.name} quedó con ${g.nurse.name}, con quien no puede estar.`);
+    if(p.aislado&&g.pac.length>1)av.push(`⚠️ ${p.name} es aislado, pero ${g.nurse.name} tiene más pacientes.`);
+  }
+  for(const g of grupos){g.asig=g.pac.map(p=>({pid:p.id,name:p.name,carga:p.carga||1,nota:p.nota||'',fija:!!p.maqFija,aislado:!!p.aislado,maq:p._m})).sort((a,b)=>a.maq-b.maq);g.aislado=g.pac.length===1&&g.pac[0].aislado;}
+  pacs.forEach(p=>delete p._m);
+  return {grupos,av};
+}
 function modoAyuda(){
   const m=$('sModo').value;
   $('sModoAyuda').innerHTML=m==='area'
     ?'Cada paciente queda en su <b>área fija</b> (se asigna en su ficha o con “Asignar áreas” en Pacientes). Los enfermeros cambian de área: se elige la que menos han tenido en los repartos guardados. <b>Guarda cada reparto</b> para que la rotación funcione.'
     :'Se asigna un enfermero por área al azar y los pacientes se reparten parejo. Si hay más áreas que enfermeros, a algunos les tocan dos áreas.';
-  $('sNoRep').parentNode.style.display=m==='area'?'none':'flex';
+  if(m==='fijo')$('sModoAyuda').innerHTML='Sin sorteo: cada área va con su <b>enfermero fijo del mes</b> (tabla de abajo) y cada paciente en su <b>máquina fija</b> o en su <b>área fija</b>. Si falta un enfermero, otro presente cubre su área y se avisa.';
+  $('sNoRep').parentNode.style.display=m==='azar'?'flex':'none';
+  $('btnSortear').textContent=m==='fijo'?'📋 Generar reparto':'🎲 Sortear';
+  $('btnResortear').textContent=m==='fijo'?'📋 Volver a generar':'🎲 Volver a sortear';
+  renderPlan();
 }
-function renderAll(){fillSelects();renderSorteo();renderPacs();renderPersonal();renderCfgEt();renderHep();renderHist();}
+function renderAll(){fillSelects();if($('planBox'))renderPlan();renderSorteo();renderPacs();renderPersonal();renderCfgEt();renderHep();renderHist();}
 
 /* ---------- Inicio ---------- */
 $('sFecha').value=hoy();

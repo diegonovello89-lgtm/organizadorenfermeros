@@ -269,6 +269,7 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
       <div><label id="hInicioLbl">Empezar en la etiqueta #</label><input type="text" inputmode="numeric" id="hInicio" value="1"></div>
     </div>
     <p class="muted" id="hContenido"></p>
+    <label style="display:flex;gap:6px;align-items:center;color:var(--tx);margin-bottom:6px"><input type="checkbox" id="hBlancas" checked> Llenar los espacios libres con etiquetas en blanco (para corregir a mano)</label>
     <label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" id="hAgrupar" checked> Agrupar por enfermero: una columna por enfermero con su nombre arriba (necesita sorteo)</label>
     <p class="muted">“Empezar en” solo es para aprovechar una hoja a la que ya le quitaron etiquetas (se cuentan de izquierda a derecha y de arriba abajo). Con hoja nueva déjalo en 1.</p>
     <p class="muted" id="hOrigen"></p>
@@ -707,7 +708,7 @@ function renderHep(){
 const fDMY=f=>{if(!f)return'';const [y,m,d]=f.split('-');return `${d}/${m}/${y}`;};
 function etiquetaHTML(T,s,d,c,prueba){
   const img=(c.modo==='completa'||prueba)?`<img src="${T.img()}" class="${c.modo==='completa'?'':'guia'}" alt="">`:'';
-  const spans=T.campos(d,c).filter(f=>f[2]).map(([x,y,txt,cen,tipo])=>{
+  const spans=(d.blanca?[]:T.campos(d,c)).filter(f=>f[2]).map(([x,y,txt,cen,tipo])=>{
     let cls=cen?'t cen':'t';
     if(tipo==='n'){const max=(s.w-x-1)/(T.fs(c)*0.6);if(txt.length>max)cls+=txt.length>max*1.25?' chico2':' chico';}
     return `<span class="${cls}" style="left:${x.toFixed(2)}mm;top:${y.toFixed(2)}mm;max-width:${(s.w-x-0.8).toFixed(2)}mm">${esc(txt)}</span>`;}).join('');
@@ -729,7 +730,8 @@ function imprimirEt(prueba){
   }
   const slots=T.slots(c),n=T.porHoja;
   const ini=prueba?0:Math.min(n-1,Math.max(0,(parseInt($('hInicio').value)||1)-1));
-  const paginas=[];
+  const paginas=[],usados=[];
+  const usar=(pg,k)=>(usados[pg]=usados[pg]||new Set()).add(k);
   const agrupar=!prueba&&$('hAgrupar').checked&&datos.some(d=>d.nurse);
   if(agrupar){
     // Cada enfermero ocupa una columna (o varias si no le cabe); el nombre va arriba de la columna
@@ -743,12 +745,20 @@ function imprimirEt(prueba){
         const pg=Math.floor(col/T.cols),cc=col%T.cols,top=slots[cc];
         const P=(paginas[pg]=paginas[pg]||[]);
         P.push(`<div class="enc" style="left:${top.x.toFixed(2)}mm;top:${Math.max(0,top.y-7).toFixed(2)}mm;width:${top.w}mm">${esc(g.nurse||'Sin enfermero')}${k?' (cont.)':''}</div>`);
-        g.items.slice(k,k+filas).forEach((d,r)=>P.push(etiquetaHTML(T,slots[r*T.cols+cc],d,c,prueba)));
+        g.items.slice(k,k+filas).forEach((d,r)=>{P.push(etiquetaHTML(T,slots[r*T.cols+cc],d,c,prueba));usar(pg,r*T.cols+cc);});
         col++;
       }
     }
   }else{
-    datos.forEach((d,k)=>{const i=ini+k;(paginas[Math.floor(i/n)]=paginas[Math.floor(i/n)]||[]).push(etiquetaHTML(T,slots[i%n],d,c,prueba));});
+    datos.forEach((d,k)=>{const i=ini+k;(paginas[Math.floor(i/n)]=paginas[Math.floor(i/n)]||[]).push(etiquetaHTML(T,slots[i%n],d,c,prueba));usar(Math.floor(i/n),i%n);});
+  }
+  // Rellenar los espacios libres con etiquetas en blanco (solo formato) para corregir a mano
+  let blancas=0;
+  if(!prueba&&c.modo==='completa'&&$('hBlancas').checked){
+    paginas.forEach((P,pg)=>{for(let k=0;k<n;k++){
+      if(usados[pg]&&usados[pg].has(k))continue;
+      if(pg===0&&!agrupar&&k<ini)continue; // etiquetas ya despegadas
+      P.push(etiquetaHTML(T,slots[k],{blanca:true},c,false));blancas++;}});
   }
   const fs=T.fs(c);
   const reglas=P=>`${P}.pag{position:relative;width:${T.W}mm;height:${T.H}mm;overflow:hidden;background:#fff;font-family:Arial,Helvetica,sans-serif;color:#000;transform-origin:0 0}
@@ -778,10 +788,10 @@ function imprimirEt(prueba){
     #etqPages .pw{width:auto!important;height:auto!important;margin:0!important;box-shadow:none!important;overflow:visible!important}
     #etqPages .pag{transform:none!important;page-break-after:always;break-after:page}
     #etqPages .pw:last-child .pag{page-break-after:auto;break-after:auto}}`;
-  abrirVista({css:cssVista,html:cuerpo,solo,nombre,W:T.W,H:T.H,titulo:`${T.nombre} · ${datos.length} etiqueta(s) · ${paginas.length} hoja(s)`});
+  abrirVista({css:cssVista,html:cuerpo,solo,nombre,W:T.W,H:T.H,titulo:`${T.nombre} · ${datos.length} etiqueta(s)${blancas?` + ${blancas} en blanco`:''} · ${paginas.length} hoja(s)`});
   if(!prueba){
     const sig=(ini+datos.length)%n+1;
-    msg('hMsg',`${datos.length} etiqueta(s) en ${paginas.length} hoja(s).${agrupar?' Agrupadas por enfermero.':sig>1?` Si vuelves a usar la última hoja, la siguiente libre es la #${sig}.`:''}`,'ok');
+    msg('hMsg',`${datos.length} etiqueta(s)${blancas?` + ${blancas} en blanco`:''} en ${paginas.length} hoja(s).${agrupar?' Agrupadas por enfermero.':sig>1?` Si vuelves a usar la última hoja, la siguiente libre es la #${sig}.`:''}`,'ok');
   }
 }
 let vista=null;

@@ -107,8 +107,13 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
     <div class="chk" id="sEnf"></div>
     <h2 style="margin-top:14px">4. Áreas que se usan hoy <span class="muted" id="sAreaCount"></span></h2>
     <div class="chk" id="sArea"></div>
-    <p class="muted">Se asigna un enfermero por área al azar. Si hay más áreas que enfermeros, a algunos les tocan dos áreas.</p>
-    <label class="noprint" style="display:flex;gap:6px;align-items:center;color:var(--tx);margin-top:8px"><input type="checkbox" id="sNoRep" checked> Evitar repetir enfermero–paciente del último reparto de este turno</label>
+    <div style="margin-top:12px"><label>Modo de reparto</label>
+      <select id="sModo" onchange="S.modoSorteo=this.value;save();modoAyuda()">
+        <option value="azar">Pacientes al azar entre enfermeros (equitativo)</option>
+        <option value="area">Pacientes fijos en su área · rotan los enfermeros</option>
+      </select></div>
+    <p class="muted" id="sModoAyuda"></p>
+    <label class="noprint" style="display:flex;gap:6px;align-items:center;color:var(--tx);margin-top:8px"><input type="checkbox" id="sNoRep" checked> <span id="sNoRepTxt">Evitar repetir enfermero–paciente del último reparto de este turno</span></label>
     <button class="btn big" style="margin-top:12px" onclick="sortear()">🎲 Sortear</button>
     <div id="sMsg"></div>
   </div>
@@ -154,6 +159,7 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
     </div>
     <div class="row" style="margin-top:8px">
       <div><label>Fecha de nacimiento</label><input type="date" id="pFnac"></div>
+      <div><label>Área fija</label><select id="pArea"></select></div>
       <div><label>Máquina fija</label><input type="text" inputmode="numeric" id="pMaq" placeholder="Vacío = cualquiera"></div>
       <div style="flex:2;display:flex;align-items:flex-end"><label style="display:flex;gap:6px;align-items:center;color:var(--tx);margin:0 0 8px"><input type="checkbox" id="pAisl"> Aislado: su enfermero solo lo atiende a él</label></div>
     </div>
@@ -166,6 +172,15 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
       <button class="btn sec hide" id="pCancel" onclick="limpiarPac()">Cancelar</button>
     </div>
     <div id="pMsg"></div>
+  </div>
+  <div class="card">
+    <details>
+      <summary style="cursor:pointer;font-weight:600">🗺️ Asignar áreas fijas automáticamente</summary>
+      <p class="muted">Pone a cada paciente sin área en una, al azar y equilibrando para que en ningún día y turno haya más pacientes que máquinas en el área. Los de máquina fija quedan en el área de su máquina. Las áreas con máquina fija de un aislado se reservan para él. Después puedes cambiar el área de cualquiera a mano.</p>
+      <label style="display:flex;gap:6px;align-items:center;color:var(--tx)"><input type="checkbox" id="aaTodos"> Reasignar también a quienes ya tienen área</label>
+      <div class="btns"><button class="btn" onclick="asignarAreas()">Asignar áreas</button></div>
+      <div id="aaMsg"></div>
+    </details>
   </div>
   <div class="card">
     <details id="impBox">
@@ -387,36 +402,49 @@ $('sFecha').onchange=()=>{const g=grupoDeFecha($('sFecha').value);if(g)$('sGrupo
 $('sGrupo').onchange=renderSorteo;$('sTurno').onchange=renderSorteo;
 
 /* ---------- Algoritmo ---------- */
-function unIntento(pacs,enfs,areas){
+function unIntento(pacs,enfs,areas,modo){
+  const porArea=modo==='area';
   const en=shuffle(enfs),ar=shuffle(areas);
   const puede=(p,n)=>!(p.noEnf||[]).includes(n.id);
   const pick=a=>a[Math.floor(Math.random()*a.length)];
+  const areaFija=p=>porArea&&p.areaFija?areas.find(a=>a.id===p.areaFija)||null:null;
+  const areaDeMaq=m=>areas.find(a=>a.maq.includes(+m));
   const grupos=[];let libresN=en.slice(),libresA=ar.slice();
+  const areaPac=new Map(); // paciente -> área donde debe quedar
   // 1) Aislados: un enfermero y un área solo para ellos
   for(const p of shuffle(pacs.filter(x=>x.aislado))){
     let a;
     if(p.maqFija)a=libresA.find(x=>x.maq.includes(+p.maqFija));
+    else if(areaFija(p))a=libresA.find(x=>x===areaFija(p));
     else{const min=Math.min(...libresA.map(x=>x.maq.length));a=pick(libresA.filter(x=>x.maq.length===min));}
     if(!a)return null;
     const cand=libresN.filter(n=>puede(p,n));if(!cand.length)return null;
     const n=pick(cand);
     libresN=libresN.filter(x=>x!==n);libresA=libresA.filter(x=>x!==a);
+    areaPac.set(p,a);
     grupos.push({nurse:n,areas:[a],maq:[...a.maq],pac:[p],carga:p.carga||1,aislado:true});
   }
-  // 2) Resto de enfermeros con el resto de las áreas
+  // 2) Resto de enfermeros con el resto de las áreas (aquí es donde rotan)
   const resto=pacs.filter(x=>!x.aislado);
   if(libresN.length>libresA.length)return null;
   if(resto.length&&!libresN.length)return null;
   const normales=libresN.map(n=>({nurse:n,areas:[],maq:[],pac:[],carga:0}));
   libresA.forEach((a,i)=>{if(!normales.length)return;const g=normales[i%normales.length];g.areas.push(a);g.maq.push(...a.maq);});
-  // 3) Pacientes con máquina fija: van con el enfermero de esa máquina
+  const grupoDeArea=a=>normales.find(g=>g.areas.includes(a));
+  const uso=new Map();const usar=a=>uso.set(a,(uso.get(a)||0)+1);
+  // 3) Máquina fija y, en modo por área, área fija
   for(const p of resto.filter(x=>x.maqFija)){
-    const g=normales.find(x=>x.maq.includes(+p.maqFija));
+    const a=areaDeMaq(p.maqFija),g=a&&grupoDeArea(a);
     if(!g||!puede(p,g.nurse))return null;
-    g.pac.push(p);g.carga+=(p.carga||1);
+    g.pac.push(p);g.carga+=(p.carga||1);usar(a);
+  }
+  for(const p of shuffle(resto.filter(x=>!x.maqFija&&areaFija(x)))){
+    const a=areaFija(p),g=grupoDeArea(a);
+    if(!g||!puede(p,g.nurse)||(uso.get(a)||0)>=a.maq.length)return null;
+    g.pac.push(p);g.carga+=(p.carga||1);usar(a);areaPac.set(p,a);
   }
   // 4) Los demás: primero los más restringidos y los de carga alta; al grupo con menos pacientes y luego menos carga
-  const orden=shuffle(resto.filter(x=>!x.maqFija)).sort((a,b)=>((b.noEnf||[]).length-(a.noEnf||[]).length)||((b.carga||1)-(a.carga||1)));
+  const orden=shuffle(resto.filter(x=>!x.maqFija&&!areaFija(x))).sort((a,b)=>((b.noEnf||[]).length-(a.noEnf||[]).length)||((b.carga||1)-(a.carga||1)));
   for(const p of orden){
     const libres=normales.filter(g=>g.pac.length<g.maq.length&&puede(p,g.nurse));
     if(!libres.length)return null;
@@ -426,18 +454,33 @@ function unIntento(pacs,enfs,areas){
     const g=pick(c.filter(g=>g.carga===minC));
     g.pac.push(p);g.carga+=(p.carga||1);
   }
-  // 5) Máquinas: las fijas en su lugar, las demás al azar dentro del área
+  // 5) Máquinas: fijas en su lugar, los de área fija dentro de su área, los demás al azar en las áreas del enfermero
   const todos=grupos.concat(normales);
   for(const g of todos){
-    const fijas=new Set(g.pac.filter(p=>p.maqFija).map(p=>+p.maqFija));
-    const m=shuffle(g.maq.filter(x=>!fijas.has(x)));let k=0;
+    const libre=new Set(g.maq.filter(x=>!g.pac.some(p=>+p.maqFija===x)));
+    const maqDe=new Map();
+    for(const p of g.pac)if(p.maqFija)maqDe.set(p,+p.maqFija);
+    for(const p of g.pac)if(!p.maqFija&&areaPac.has(p)){
+      const m=pick(areaPac.get(p).maq.filter(x=>libre.has(x)));if(m==null)return null;libre.delete(m);maqDe.set(p,m);}
+    const resto2=shuffle([...libre]);let k=0;
+    for(const p of g.pac)if(!maqDe.has(p))maqDe.set(p,resto2[k++]);
     g.asig=g.pac.map(p=>({pid:p.id,name:p.name,carga:p.carga||1,nota:p.nota||'',fija:!!p.maqFija,aislado:!!p.aislado,
-      maq:p.maqFija?+p.maqFija:m[k++]})).sort((a,b)=>a.maq-b.maq);
+      maq:maqDe.get(p)})).sort((a,b)=>a.maq-b.maq);
   }
   return todos;
 }
+// Cuántas veces (reciente pesa más) ha estado cada enfermero en cada área en este turno
+function historialAreas(t){
+  const h=S.history.filter(x=>x.turno===t).sort((a,b)=>b.saved-a.saved).slice(0,8);
+  const peso={};
+  h.forEach((r,i)=>{const w=i===0?50:8-i;
+    r.grupos.forEach(g=>{const ids=g.areaIds||(g.areas||[]).map(nm=>(S.areas.find(a=>a.name===nm)||{}).id).filter(Boolean);
+      ids.forEach(id=>{const k=g.nurseId+'|'+id;peso[k]=(peso[k]||0)+w;});});});
+  return {peso,ultimo:h[0]};
+}
 function sortear(){
   msg('sMsg','');
+  const modo=$('sModo').value;S.modoSorteo=modo;save();
   const g=$('sGrupo').value,t=$('sTurno').value;
   const pacs=S.patients.filter(p=>selIds('sPac').includes(p.id));
   const enfs=S.nurses.filter(n=>selIds('sEnf').includes(n.id));
@@ -456,36 +499,89 @@ function sortear(){
     (fijos[p.maqFija]=fijos[p.maqFija]||[]).push(p.name);
   }
   for(const m in fijos)if(fijos[m].length>1)err.push(`La máquina ${m} es fija de varios pacientes de hoy: ${fijos[m].join(', ')}.`);
+  if(modo==='area'){
+    const cuenta={};
+    for(const p of pacs){
+      const a=p.maqFija?areas.find(x=>x.maq.includes(+p.maqFija)):p.areaFija?areas.find(x=>x.id===p.areaFija):null;
+      if(p.areaFija&&!p.maqFija&&!a){const an=(S.areas.find(x=>x.id===p.areaFija)||{}).name||'?';err.push(`${p.name} es del área “${an}”, que no está marcada hoy.`);continue;}
+      if(a)cuenta[a.id]=(cuenta[a.id]||0)+1;
+    }
+    for(const a of areas)if((cuenta[a.id]||0)>a.maq.length)err.push(`${a.name} tiene ${cuenta[a.id]} pacientes asignados hoy y solo ${a.maq.length} máquinas.`);
+  }
   for(const p of pacs)if(enfs.every(n=>(p.noEnf||[]).includes(n.id)))err.push(`${p.name} no puede estar con ninguno de los enfermeros presentes.`);
   const nAisl=pacs.filter(p=>p.aislado).length;
   if(nAisl&&nAisl>=enfs.length&&pacs.length>nAisl)err.push(`Hay ${nAisl} paciente(s) aislado(s) y ${enfs.length} enfermero(s): no queda nadie para los demás pacientes.`);
   if(nAisl>areas.length)err.push(`Hay ${nAisl} pacientes aislados y solo ${areas.length} áreas.`);
   if(err.length)return msg('sMsg',err.map(esc).join('<br>'),'err');
 
-  // Último reparto del mismo turno para evitar repetir parejas
+  // Último reparto del mismo turno: evitar repetir parejas (modo al azar) o áreas (modo rotación)
   const prev=S.history.filter(h=>h.turno===t).sort((a,b)=>b.saved-a.saved)[0];
   const pares=new Set();
-  if(prev&&$('sNoRep').checked)prev.grupos.forEach(x=>x.asig.forEach(a=>pares.add(x.nurseId+'|'+a.pid)));
+  if(modo!=='area'&&prev&&$('sNoRep').checked)prev.grupos.forEach(x=>x.asig.forEach(a=>pares.add(x.nurseId+'|'+a.pid)));
+  const hist=modo==='area'?historialAreas(t):{peso:{}};
+  const rotacion=gr=>gr.reduce((s,x)=>s+x.areas.reduce((s2,a)=>s2+(hist.peso[x.nurse.id+'|'+a.id]||0),0),0);
+  const repArea=gr=>gr.filter(x=>x.areas.some(a=>(hist.peso[x.nurse.id+'|'+a.id]||0)>=50)).length;
   const spread=gr=>{gr=gr.filter(x=>!x.aislado);if(!gr.length)return 0;const n=gr.map(x=>x.pac.length),c=gr.map(x=>x.carga);return (Math.max(...n)-Math.min(...n))*100+(Math.max(...c)-Math.min(...c));};
-  const conCondiciones=pacs.some(p=>p.maqFija||p.aislado||(p.noEnf||[]).length);
+  const conCondiciones=modo==='area'||pacs.some(p=>p.maqFija||p.aislado||(p.noEnf||[]).length);
   let mejor=null,mejorScore=Infinity,mejorRep=0;
-  const intentos=(pares.size||conCondiciones)?600:1;
+  const intentos=(pares.size||conCondiciones)?800:1;
   for(let i=0;i<intentos;i++){
-    const r=unIntento(pacs,enfs,areas);if(!r)continue;
-    const rep=r.reduce((s,x)=>s+x.pac.filter(p=>pares.has(x.nurse.id+'|'+p.id)).length,0);
-    const sp=spread(r),score=sp*1000+rep;
+    const r=unIntento(pacs,enfs,areas,modo);if(!r)continue;
+    let score,rep=0;
+    if(modo==='area'){score=rotacion(r)*100000+spread(r);}
+    else{rep=r.reduce((s,x)=>s+x.pac.filter(p=>pares.has(x.nurse.id+'|'+p.id)).length,0);score=spread(r)*1000+rep;}
     if(score<mejorScore){mejor=r;mejorScore=score;mejorRep=rep;}
-    if(rep===0&&sp<=101&&i>30)break;
+    if(modo!=='area'&&rep===0&&spread(r)<=101&&i>30)break;
   }
-  if(!mejor)return msg('sMsg','No se encontró un reparto que cumpla todas las condiciones (máquinas fijas, aislados y enfermeros que no pueden). Revisa esas condiciones o marca más enfermeros o áreas.','err');
-  actual={id:uid(),fecha:$('sFecha').value,dia:+g,turno:t,saved:null,
-    grupos:mejor.map(x=>({nurseId:x.nurse.id,nurse:x.nurse.name,areas:x.areas.map(a=>a.name),carga:x.carga,aislado:!!x.aislado,asig:x.asig}))
+  if(!mejor)return msg('sMsg','No se encontró un reparto que cumpla todas las condiciones (áreas fijas, máquinas fijas, aislados y enfermeros que no pueden). Revisa esas condiciones o marca más enfermeros o áreas.','err');
+  actual={id:uid(),fecha:$('sFecha').value,dia:+g,turno:t,saved:null,modo,
+    grupos:mejor.map(x=>({nurseId:x.nurse.id,nurse:x.nurse.name,areas:x.areas.map(a=>a.name),areaIds:x.areas.map(a=>a.id),carga:x.carga,aislado:!!x.aislado,asig:x.asig}))
       .sort((a,b)=>a.nurse.localeCompare(b.nurse))};
   let info=`${pacs.length} pacientes · ${enfs.length} enfermeros · ${cap} máquinas.`;
-  if(conCondiciones)info+=' Se respetaron máquinas fijas, aislados y restricciones de enfermero.';
-  if(pares.size)info+=mejorRep?` ⚠️ ${mejorRep} pareja(s) repetida(s) del último reparto (no se pudo evitar).`:' Sin parejas repetidas del último reparto.';
+  if(modo==='area'){
+    if(!hist.ultimo)info+=' Rotación: aún no hay repartos guardados de este turno; guarda cada reparto (💾) para que los enfermeros vayan rotando.';
+    else{const r=repArea(mejor);info+=r?` ⚠️ ${r} enfermero(s) repiten el área del último reparto (no se pudo evitar).`:' Rotación: ningún enfermero repite el área del último reparto.';}
+    const sin=pacs.filter(p=>!p.areaFija&&!p.maqFija&&!p.aislado).length;
+    if(sin)info+=` ${sin} paciente(s) sin área fija se acomodaron donde hubo lugar.`;
+  }else{
+    if(conCondiciones)info+=' Se respetaron máquinas fijas, aislados y restricciones de enfermero.';
+    if(pares.size)info+=mejorRep?` ⚠️ ${mejorRep} pareja(s) repetida(s) del último reparto (no se pudo evitar).`:' Sin parejas repetidas del último reparto.';
+  }
   if(enfs.length<areas.length)info+=' Algunos enfermeros cubren más de un área.';
   pintarResultado(actual,info);
+}
+/* Asignar automáticamente un área fija a los pacientes (equilibrando por día y turno) */
+function asignarAreas(){
+  const todos=$('aaTodos').checked;
+  if(!S.areas.length)return msg('aaMsg','Primero da de alta las áreas en “Personal y áreas”.','err');
+  if(todos&&!confirm('Esto cambiará el área de TODOS los pacientes. ¿Continuar?'))return;
+  // Las áreas donde hay máquina fija de un aislado se reservan para él
+  const reservadas=new Set(S.patients.filter(p=>p.aislado&&p.maqFija).map(p=>(S.areas.find(a=>a.maq.includes(+p.maqFija))||{}).id));
+  const areas=S.areas.filter(a=>!reservadas.has(a.id));
+  const areaDeMaq=m=>S.areas.find(a=>a.maq.includes(+m));
+  let asignados=0,sinLugar=[];
+  for(const t of S.turnos){
+    const pats=S.patients.filter(p=>p.turno===t);
+    const carga={};const sumar=(a,p)=>p.dias.forEach(d=>{const k=a.id+'|'+d;carga[k]=(carga[k]||0)+1;});
+    // primero fijar a quienes tienen máquina fija o ya tienen área (si no se reasigna todo)
+    for(const p of pats){
+      if(p.maqFija){const a=areaDeMaq(p.maqFija);if(a){p.areaFija=a.id;sumar(a,p);}continue;}
+      if(p.aislado)continue;
+      if(!todos&&p.areaFija){const a=S.areas.find(x=>x.id===p.areaFija);if(a){sumar(a,p);continue;}}
+      if(todos)p.areaFija='';
+    }
+    const pend=shuffle(pats.filter(p=>!p.maqFija&&!p.aislado&&!p.areaFija)).sort((a,b)=>b.dias.length-a.dias.length);
+    for(const p of pend){
+      const ok=areas.filter(a=>p.dias.every(d=>(carga[a.id+'|'+d]||0)<a.maq.length));
+      if(!ok.length){sinLugar.push(p.name);continue;}
+      const ocup=a=>Math.max(...p.dias.map(d=>((carga[a.id+'|'+d]||0)+1)/a.maq.length));
+      const min=Math.min(...ok.map(ocup));
+      const a=shuffle(ok.filter(x=>ocup(x)===min))[0];
+      p.areaFija=a.id;sumar(a,p);asignados++;
+    }
+  }
+  save();renderPacs();renderSorteo.done=false;
+  msg('aaMsg',`${asignados} paciente(s) con área asignada.${sinLugar.length?` Sin lugar (revisa máquinas por área): ${esc(sinLugar.join(', '))}.`:''}`,sinLugar.length?'warn':'ok');
 }
 function pintarResultado(r,info){
   $('resCard').classList.remove('hide');
@@ -522,7 +618,7 @@ function guardarPac(){
   const dias=getDias();
   if(!dias.length)return msg('pMsg','Marca al menos un día.','err');
   const data={name,dias,turno:$('pTurno').value,carga:+$('pCarga').value,nota:$('pNota').value.trim(),
-    fnac:$('pFnac').value,maqFija:parseInt($('pMaq').value)||'',aislado:$('pAisl').checked,
+    fnac:$('pFnac').value,maqFija:parseInt($('pMaq').value)||'',areaFija:$('pArea').value,aislado:$('pAisl').checked,
     noEnf:[...$('pNoEnf').querySelectorAll('input:checked')].map(i=>i.value)};
   const id=$('pId').value;
   if(id){Object.assign(S.patients.find(p=>p.id===id),data);msg('pMsg','Paciente actualizado.','ok');}
@@ -537,7 +633,7 @@ function setDias(arr){$('pDias').querySelectorAll('input').forEach(i=>{i.checked
 function getDias(){return [...$('pDias').querySelectorAll('input:checked')].map(i=>+i.value);}
 function limpiarPac(keep){
   $('pId').value='';$('pNombre').value='';$('pNota').value='';$('pCarga').value='1';setDias([]);
-  $('pFnac').value='';$('pMaq').value='';$('pAisl').checked=false;renderNoEnf([]);
+  $('pFnac').value='';$('pMaq').value='';renderAreaSel('');$('pAisl').checked=false;renderNoEnf([]);
   $('pFormTitle').textContent='Dar de alta paciente';$('pCancel').classList.add('hide');
   if(!keep)msg('pMsg','');
   $('pNombre').focus();
@@ -546,7 +642,7 @@ function editPac(id){
   const p=S.patients.find(x=>x.id===id);if(!p)return;
   $('pId').value=p.id;$('pNombre').value=p.name;setDias(p.dias);$('pTurno').value=p.turno;
   $('pFnac').value=p.fnac||'';$('pCarga').value=p.carga||1;$('pNota').value=p.nota||'';
-  $('pMaq').value=p.maqFija||'';$('pAisl').checked=!!p.aislado;renderNoEnf(p.noEnf||[]);
+  $('pMaq').value=p.maqFija||'';renderAreaSel(p.areaFija||'');$('pAisl').checked=!!p.aislado;renderNoEnf(p.noEnf||[]);
   $('pFormTitle').textContent='Editar paciente';$('pCancel').classList.remove('hide');msg('pMsg','');
   window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -559,8 +655,15 @@ function renderNoEnf(sel){
   if(!sel)sel=[...$('pNoEnf').querySelectorAll('input:checked')].map(i=>i.value);
   $('pNoEnf').innerHTML=S.nurses.map(n=>{const c=sel.includes(n.id);return `<label class="${c?'on':''}"><input type="checkbox" value="${n.id}" ${c?'checked':''} onchange="this.parentNode.classList.toggle('on',this.checked)">${esc(n.name)}</label>`;}).join('')||'<span class="muted">Primero agrega enfermeros.</span>';
 }
+function renderAreaSel(v){
+  if(v===undefined)v=$('pArea').value;
+  $('pArea').innerHTML='<option value="">Ninguna</option>'+S.areas.map(a=>`<option value="${a.id}">${esc(a.name)} (${a.maq.join(',')})</option>`).join('');
+  $('pArea').value=S.areas.some(a=>a.id===v)?v:'';
+}
 function condTags(p){
   const t=[];
+  const ar=p.areaFija&&S.areas.find(a=>a.id===p.areaFija);
+  if(ar)t.push(`<span class="tag" style="background:#eef6e8;color:#3b6d11">${esc(ar.name)}</span>`);
   if(p.maqFija)t.push(`<span class="tag" style="background:#e3f1f6;color:#0f6d8c">máq. fija ${p.maqFija}</span>`);
   if(p.aislado)t.push('<span class="tag alta">aislado</span>');
   const no=(p.noEnf||[]).map(id=>(S.nurses.find(n=>n.id===id)||{}).name).filter(Boolean);
@@ -568,7 +671,7 @@ function condTags(p){
   return t.join('');
 }
 function renderPacs(){
-  renderNoEnf();
+  renderNoEnf();renderAreaSel();
   const q=$('fTxt').value.trim().toLowerCase(),g=$('fGrupo').value,t=$('fTurno').value;
   const list=S.patients.filter(p=>(!q||p.name.toLowerCase().includes(q))&&(!g||p.dias.includes(+g))&&(!t||p.turno===t))
     .sort((a,b)=>String(a.turno).localeCompare(String(b.turno),undefined,{numeric:true})||a.name.localeCompare(b.name));
@@ -1076,6 +1179,13 @@ function impAplicar(){
   renderSorteo.done=false;fillSelects();renderPacs();
 }
 
+function modoAyuda(){
+  const m=$('sModo').value;
+  $('sModoAyuda').innerHTML=m==='area'
+    ?'Cada paciente queda en su <b>área fija</b> (se asigna en su ficha o con “Asignar áreas” en Pacientes). Los enfermeros cambian de área: se elige la que menos han tenido en los repartos guardados. <b>Guarda cada reparto</b> para que la rotación funcione.'
+    :'Se asigna un enfermero por área al azar y los pacientes se reparten parejo. Si hay más áreas que enfermeros, a algunos les tocan dos áreas.';
+  $('sNoRep').parentNode.style.display=m==='area'?'none':'flex';
+}
 function renderAll(){fillSelects();renderSorteo();renderPacs();renderPersonal();renderCfgEt();renderHep();renderHist();}
 
 /* ---------- Inicio ---------- */
@@ -1083,7 +1193,7 @@ $('sFecha').value=hoy();
 fillSelects();
 {const g=grupoDeFecha(hoy());if(g)$('sGrupo').value=g;}
 renderAll();
-prepararJpg('hep',ETQ_IMG);prepararJpg('sol',SOL_IMG);
+$('sModo').value=S.modoSorteo||'azar';modoAyuda();prepararJpg('hep',ETQ_IMG);prepararJpg('sol',SOL_IMG);
 </script>
 </body>
 </html>

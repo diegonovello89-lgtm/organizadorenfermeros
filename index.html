@@ -46,6 +46,14 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
 .nurse h3 span{font-weight:400;font-size:13px;color:var(--mut)}
 .nurse table td{font-size:14px}
 .hide{display:none!important}
+#etqView{position:fixed;inset:0;z-index:50;background:#6b7280;overflow:auto;-webkit-overflow-scrolling:touch}
+#etqBar{position:sticky;top:0;z-index:2;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;background:var(--pri);color:#fff}
+#etqBar .btn.sec{background:transparent;color:#fff;border-color:#fff}
+#etqBar .btn{padding:7px 11px;font-size:14px}
+#etqTitulo{flex:1;font-size:13px;min-width:100px}
+#etqNota{color:#fff;font-size:12px;margin:8px 10px 0}
+#etqPages{padding:10px}
+#etqPages .pw{margin:0 auto 10px;overflow:hidden;box-shadow:0 2px 8px #0006;background:#fff}
 .print-head{display:none}
 @media print{
   header,nav,.noprint{display:none!important}
@@ -279,6 +287,16 @@ th{font-size:12px;color:var(--mut);text-transform:uppercase}
 </section>
 
 </main>
+<div id="etqView" class="hide">
+  <div id="etqBar">
+    <button class="btn sec" onclick="cerrarVista()">✕ Cerrar</button>
+    <span id="etqTitulo"></span>
+    <button class="btn sec" onclick="compartirVista()">📤 Compartir</button>
+    <button class="btn" style="background:#fff;color:var(--pri)" onclick="window.print()">🖨️ Imprimir</button>
+  </div>
+  <p id="etqNota">Vista previa. Al imprimir usa papel carta, escala 100 % y sin márgenes si tu impresora lo permite.</p>
+  <div id="etqPages"></div>
+</div>
 <script>
 const DIAS={1:'Lunes',2:'Martes',3:'Miércoles',4:'Jueves',5:'Viernes',6:'Sábado'};
 const DCORTO={1:'Lun',2:'Mar',3:'Mié',4:'Jue',5:'Vie',6:'Sáb'};
@@ -733,26 +751,70 @@ function imprimirEt(prueba){
     datos.forEach((d,k)=>{const i=ini+k;(paginas[Math.floor(i/n)]=paginas[Math.floor(i/n)]||[]).push(etiquetaHTML(T,slots[i%n],d,c,prueba));});
   }
   const fs=T.fs(c);
-  const css=`@page{size:${T.hoja};margin:0}
-  *{box-sizing:border-box}html,body{margin:0;padding:0}
-  body{font-family:Arial,Helvetica,sans-serif;color:#000}
-  .pag{position:relative;width:${T.W}mm;height:${T.H}mm;overflow:hidden;page-break-after:always;break-after:page}
-  .pag:last-child{page-break-after:auto;break-after:auto}
-  .slot{position:absolute;overflow:hidden}
-  .slot img{position:absolute;left:0;top:0;width:100%;height:100%}
-  .slot img.guia{opacity:.35}
-  .t{position:absolute;white-space:nowrap;font-size:${fs}mm;font-weight:bold;line-height:1;transform:translateY(-58%);overflow:hidden;text-overflow:ellipsis}
-  .t.cen{transform:translate(-50%,-58%)}
-  .enc{position:absolute;height:6.5mm;display:flex;align-items:flex-end;justify-content:center;font-size:4mm;font-weight:bold;white-space:nowrap;overflow:hidden}
-  .t.chico{font-size:${fs*0.85}mm}.t.chico2{font-size:${fs*0.72}mm}
-  @media screen{body{background:#888;padding:10px}.pag{background:#fff;margin:0 auto 10px;box-shadow:0 2px 8px #0005}}`;
-  const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Etiquetas ${T.nombre}</title><style>${css}</style></head><body>${paginas.map(p=>`<div class="pag">${(p||[]).join('')}</div>`).join('')}<script>window.onload=()=>setTimeout(()=>window.print(),400)<\/script></body></html>`;
-  const w=window.open('','_blank');
-  if(!w)return alert('El navegador bloqueó la ventana. Permite ventanas emergentes para imprimir.');
-  w.document.open();w.document.write(html);w.document.close();
+  const reglas=P=>`${P}.pag{position:relative;width:${T.W}mm;height:${T.H}mm;overflow:hidden;background:#fff;font-family:Arial,Helvetica,sans-serif;color:#000;transform-origin:0 0}
+  ${P}.pag *{box-sizing:border-box}
+  ${P}.slot{position:absolute;overflow:hidden}
+  ${P}.slot img{position:absolute;left:0;top:0;width:100%;height:100%}
+  ${P}.slot img.guia{opacity:.35}
+  ${P}.t{position:absolute;white-space:nowrap;font-size:${fs}mm;font-weight:bold;line-height:1;transform:translateY(-58%);overflow:hidden;text-overflow:ellipsis}
+  ${P}.t.cen{transform:translate(-50%,-58%)}
+  ${P}.enc{position:absolute;height:6.5mm;display:flex;align-items:flex-end;justify-content:center;font-size:4mm;font-weight:bold;white-space:nowrap;overflow:hidden}
+  ${P}.t.chico{font-size:${fs*0.85}mm}${P}.t.chico2{font-size:${fs*0.72}mm}`;
+  const cuerpo=paginas.map(p=>`<div class="pw"><div class="pag">${(p||[]).join('')}</div></div>`).join('');
+  // Archivo independiente (para Compartir)
+  const cssSolo=`@page{size:${T.hoja};margin:0}html,body{margin:0;padding:0}${reglas('')}
+  .pag{page-break-after:always;break-after:page}.pw:last-child .pag{page-break-after:auto;break-after:auto}
+  @media screen{body{background:#888;padding:10px}.pw{margin:0 auto 10px;width:max-content;box-shadow:0 2px 8px #0005}}`;
+  const nombre=`etiquetas_${T.nombre.toLowerCase()}_${(prueba?hoy():$('hFecha').value)||hoy()}.html`;
+  const solo=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Etiquetas ${T.nombre}</title><style>${cssSolo}</style></head><body>${cuerpo}</body></html>`;
+  // Vista dentro de la misma página (funciona en iPhone/Android)
+  const cssVista=`${reglas('#etqPages ')}
+  @media print{@page{size:${T.hoja};margin:0}
+    body.etq-print>*:not(#etqView){display:none!important}
+    body.etq-print{background:#fff!important;margin:0!important;padding:0!important}
+    #etqView{position:static!important;background:#fff!important;overflow:visible!important;display:block!important}
+    #etqBar,#etqNota{display:none!important}
+    #etqPages{padding:0!important}
+    #etqPages .pw{width:auto!important;height:auto!important;margin:0!important;box-shadow:none!important;overflow:visible!important}
+    #etqPages .pag{transform:none!important;page-break-after:always;break-after:page}
+    #etqPages .pw:last-child .pag{page-break-after:auto;break-after:auto}}`;
+  abrirVista({css:cssVista,html:cuerpo,solo,nombre,W:T.W,H:T.H,titulo:`${T.nombre} · ${datos.length} etiqueta(s) · ${paginas.length} hoja(s)`});
   if(!prueba){
     const sig=(ini+datos.length)%n+1;
     msg('hMsg',`${datos.length} etiqueta(s) en ${paginas.length} hoja(s).${agrupar?' Agrupadas por enfermero.':sig>1?` Si vuelves a usar la última hoja, la siguiente libre es la #${sig}.`:''}`,'ok');
+  }
+}
+let vista=null;
+function abrirVista(v){
+  vista=v;
+  let st=$('etqStyle');if(!st){st=document.createElement('style');st.id='etqStyle';document.head.appendChild(st);}
+  st.textContent=v.css;
+  $('etqTitulo').textContent=v.titulo;
+  $('etqPages').innerHTML=v.html;
+  document.body.classList.add('etq-print');
+  $('etqView').classList.remove('hide');$('etqView').scrollTop=0;
+  escalarVista();
+}
+function escalarVista(){
+  if(!vista||$('etqView').classList.contains('hide'))return;
+  const k=96/25.4,w=vista.W*k,h=vista.H*k;
+  const s=Math.min(1,($('etqView').clientWidth-20)/w);
+  $('etqPages').querySelectorAll('.pw').forEach(pw=>{pw.style.width=(w*s)+'px';pw.style.height=(h*s)+'px';pw.firstElementChild.style.transform=`scale(${s})`;});
+}
+window.addEventListener('resize',escalarVista);
+function cerrarVista(){
+  $('etqView').classList.add('hide');$('etqPages').innerHTML='';
+  document.body.classList.remove('etq-print');
+  const st=$('etqStyle');if(st)st.remove();
+  vista=null;
+}
+async function compartirVista(){
+  if(!vista)return;
+  const f=new File([vista.solo],vista.nombre,{type:'text/html'});
+  if(navigator.canShare&&navigator.canShare({files:[f]})){
+    try{await navigator.share({files:[f],title:'Etiquetas'});}catch(e){}
+  }else{
+    const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;document.body.appendChild(a);a.click();a.remove();
   }
 }
 
